@@ -1,15 +1,15 @@
 {
   "raw_rows": 8518763,
-  "duplicates_removed": 761551,
-  "rows_after_dedup": 7757212,
+  "duplicates_removed": 761550,
+  "rows_after_dedup": 7757213,
   "clip_log": {
     "Aggregate": {
       "negative_clipped": 0,
-      "spike_removed": 19161
+      "spike_removed": 19162
     },
     "Appliance1": {
       "negative_clipped": 0,
-      "spike_removed": 180
+      "spike_removed": 179
     },
     "Appliance2": {
       "negative_clipped": 0,
@@ -48,19 +48,8 @@
     "total_gaps_over_5min": 390,
     "total_gaps_over_1hr": 21
   },
-  "nan_after_cleaning": {
-    "Aggregate": 3869,
-    "Appliance1": 8380,
-    "Appliance2": 13303,
-    "Appliance3": 12191,
-    "Appliance4": 2281,
-    "Appliance5": 39515,
-    "Appliance6": 762,
-    "Appliance7": 0,
-    "Appliance8": 6315,
-    "Appliance9": 802543
-  },
   "rows_1min": 920031,
   "outage_minutes": 115353,
-  "outage_pct": 12.54
+  "outage_pct": 12.54,
+  "peak_memory_mb": 181.67
 }

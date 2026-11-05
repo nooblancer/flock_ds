@@ -9,7 +9,10 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 sys.path.insert(0, ".")
 os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["MPLCONFIGDIR"] = os.path.expanduser("~/.matplotlib_tmp")
+from src.config import OUTPUT_DIR, PLOT_DIR, RAW_DIR, TABLE_DIR
+cache_dir = OUTPUT_DIR / ".matplotlib_cache"
+cache_dir.mkdir(parents=True, exist_ok=True)
+os.environ["MPLCONFIGDIR"] = str(cache_dir)
 
 import matplotlib
 matplotlib.use("Agg")
@@ -17,8 +20,6 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 import numpy as np
-
-from src.config import OUTPUT_DIR, PLOT_DIR, RAW_DIR, TABLE_DIR
 
 def main():
     print("[Plots] Loading cleaned 1-min data ...")

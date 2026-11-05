@@ -281,3 +281,120 @@ class StreamingEdgeBuffer:
             buf.last_timestamp = pd.Timestamp(state["last_timestamp"])
         return buf
 
+
+# ────────────────────────────────────────────────────────────────────────────
+# 3. Memory-Bounded Chunked Ingestion & Iterative Resampling Utilities
+# ────────────────────────────────────────────────────────────────────────────
+
+def stream_chunked_csv(
+    filepath: str | Path,
+    chunksize: int = 100000,
+    usecols: Optional[list[str]] = None,
+    parse_dates: Optional[list[str]] = None,
+) -> Generator[pd.DataFrame, None, None]:
+    """Iteratively stream large raw CSV telemetry files in bounded RAM chunks.
+
+    Guarantees strict O(chunksize) memory footprint on CI/CD runners and low-memory
+    edge devices regardless of total file size (e.g. 500 MB to 50 GB).
+
+    Parameters
+    ----------
+    filepath : str or Path
+        Path to raw telemetry CSV file.
+    chunksize : int, default 100000
+        Number of rows per iteration.
+    usecols : list[str], optional
+        Columns to read from disk.
+    parse_dates : list[str], optional
+        Columns to parse directly into DatetimeIndex.
+
+    Yields
+    ------
+    pd.DataFrame
+        Chunked slice of raw telemetry.
+    """
+    path = Path(filepath)
+    if not path.exists():
+        raise FileNotFoundError(f"Telemetry file not found: {path}")
+
+    for chunk in pd.read_csv(path, chunksize=chunksize, usecols=usecols):
+        if parse_dates:
+            for dt_col in parse_dates:
+                if dt_col in chunk.columns:
+                    chunk[dt_col] = pd.to_datetime(chunk[dt_col])
+        yield chunk
+
+
+def iterative_resample_1min(
+    chunk_generator: Generator[pd.DataFrame, None, None],
+    time_col: str = "Time",
+    power_cols: Optional[list[str]] = None,
+    agg_func: str = "mean",
+) -> pd.DataFrame:
+    """Iteratively resample a streaming chunk generator into 1-minute intervals.
+
+    Maintains minute-boundary alignment across successive chunks, guaranteeing that
+    no minute bin is fragmented or split across partition boundaries.
+
+    Parameters
+    ----------
+    chunk_generator : Generator[pd.DataFrame, None, None]
+        Generator yielding raw telemetry chunks.
+    time_col : str, default 'Time'
+        Timestamp column name.
+    power_cols : list[str], optional
+        Power measurement columns to aggregate.
+    agg_func : str, default 'mean'
+        Aggregation method ('mean', 'sum', 'median').
+
+    Returns
+    -------
+    pd.DataFrame
+        Aggregated 1-minute DataFrame indexed by timestamp.
+    """
+    minute_carryover: Optional[pd.DataFrame] = None
+    resampled_slices: list[pd.DataFrame] = []
+
+    for chunk in chunk_generator:
+        if chunk.empty:
+            continue
+
+        if minute_carryover is not None:
+            chunk = pd.concat([minute_carryover, chunk], ignore_index=True)
+            minute_carryover = None
+
+        if time_col in chunk.columns:
+            if not pd.api.types.is_datetime64_any_dtype(chunk[time_col]):
+                chunk[time_col] = pd.to_datetime(chunk[time_col])
+            chunk = chunk.set_index(time_col)
+
+        cols = power_cols if power_cols is not None else [c for c in chunk.columns if c != "Unix"]
+
+        # Hold back readings belonging to the final uncompleted minute
+        last_min = chunk.index[-1].floor("1min")
+        ready_mask = chunk.index < last_min
+        ready_chunk = chunk[ready_mask]
+
+        minute_carryover = chunk[~ready_mask].reset_index()
+
+        if not ready_chunk.empty:
+            if agg_func == "mean":
+                resampled = ready_chunk[cols].resample("1min").mean()
+            elif agg_func == "sum":
+                resampled = ready_chunk[cols].resample("1min").sum()
+            else:
+                resampled = ready_chunk[cols].resample("1min").agg(agg_func)
+            resampled_slices.append(resampled)
+
+    if minute_carryover is not None and not minute_carryover.empty:
+        tail_df = minute_carryover.set_index(time_col)
+        cols = power_cols if power_cols is not None else [c for c in tail_df.columns if c != "Unix"]
+        resampled = tail_df[cols].resample("1min").agg(agg_func)
+        resampled_slices.append(resampled)
+
+    if not resampled_slices:
+        return pd.DataFrame()
+
+    df_resampled = pd.concat(resampled_slices)
+    return df_resampled[~df_resampled.index.duplicated(keep="first")]
+
