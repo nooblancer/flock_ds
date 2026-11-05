@@ -1,0 +1,25 @@
+{
+  "total_rows_combined": 8518763,
+  "part1_rows": 4377877,
+  "part2_rows": 4140886,
+  "duplicate_timestamp_rows": 1412513,
+  "unique_duplicate_timestamps": 650962,
+  "date_range_start": "2013-10-09 14:06:17",
+  "date_range_end": "2015-07-10 11:56:32",
+  "median_interval_sec": 6.0,
+  "mean_interval_sec": 6.48,
+  "gaps_over_1hr": 21,
+  "interval_distribution": {
+    "<1s": 980086,
+    "1-5s": 1670154,
+    "5-8s": 3905017,
+    "8-10s": 160980,
+    "10-15s": 1026975,
+    "15-30s": 9166,
+    "30s-1m": 796,
+    "1-5m": 3647,
+    "5m-1h": 369,
+    "1h-1d": 9,
+    ">1d": 12
+  }
+}

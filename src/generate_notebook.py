@@ -1,0 +1,243 @@
+"""
+Script to generate the end-to-end Jupyter Notebook for the Flock Energy NILM project.
+"""
+import json
+from pathlib import Path
+
+nb = {
+    "cells": [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# Flock Energy — NILM Data Science Pipeline\n",
+                "## REFIT Data Cleaning & Appliance Disaggregation (Washing Machine)\n",
+                "\n",
+                "**Candidate:** Kushagra Bhatore  \n",
+                "**Role:** Junior Data Scientist  \n",
+                "**Company:** Flock Energy / Watt Wizards Pvt. Ltd.  \n",
+                "\n",
+                "---\n",
+                "### Notebook Roadmap\n",
+                "1. **Environment Setup & Data Ingestion**: Inspect dataset schema, units (Watts), and sampling rate (~8s).\n",
+                "2. **Raw Data Inspection & 1-Minute Cleaning (House 1)**: Audit timestamps, duplicates, outages, spikes, and resample to 1-minute.\n",
+                "3. **Exploratory Data Analysis of Washing Machines**: Analyze 5 households, implement physical cycle detection rule, examine diurnal & weekly profiles.\n",
+                "4. **Appliance Disaggregation Modeling**: Benchmark baselines vs XGBoost regressor using a strict chronological block split.\n",
+                "5. **Visualizations & Failure Mode Analysis**: Inspect actual vs. predicted profiles, feature importances, and overlapping load errors."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Setup environment and import modules\n",
+                "import sys, os\n",
+                "sys.path.insert(0, '..')\n",
+                "os.environ['PYTHONIOENCODING'] = 'utf-8'\n",
+                "\n",
+                "import pandas as pd\n",
+                "import numpy as np\n",
+                "import matplotlib.pyplot as plt\n",
+                "import matplotlib.dates as mdates\n",
+                "import json\n",
+                "\n",
+                "from src.config import RAW_DIR, CLEAN_DIR, PLOT_DIR, TABLE_DIR, SELECTED_HOUSES, WASHING_MACHINE_CHANNEL\n",
+                "from src.data_ingestion import load_raw_house, load_clean_house, data_summary\n",
+                "\n",
+                "print('Environment and configuration loaded successfully!')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Section 1: Raw Data Inspection & Quality Findings (House 1)\n",
+                "We examine the raw ~8-second polled readings across Part 1 and Part 2 for House 1."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Load raw inspection stats\n",
+                "with open('../outputs/tables/raw_house1_inspection.json', 'r') as f:\n",
+                "    raw_stats = json.load(f)\n",
+                "\n",
+                "print(json.dumps(raw_stats, indent=2))"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "### Cleaning Pipeline Execution Log\n",
+                "We review the quantitative impact of deduplication (favoring Part 2 NaN semantics), spike clipping (>10 kW), short-gap interpolation (≤5 min), and 1-minute mean resampling."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "with open('../outputs/tables/house1_cleaning_log.json', 'r') as f:\n",
+                "    cleaning_log = json.load(f)\n",
+                "\n",
+                "pd.DataFrame(list(cleaning_log.items()), columns=['Pipeline Metric', 'Value'])"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Display before vs after 48-hour cleaning comparison plot\n",
+                "from IPython.display import Image\n",
+                "Image('../outputs/plots/house1_raw_vs_clean_48h.png')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Section 2: Washing Machine Exploratory Data Analysis (>=4 Households)\n",
+                "We analyze 5 households (Houses 1, 2, 5, 7, 20) using our physical thresholding cycle detection rule:\n",
+                "* **Active Threshold**: $P \\ge 15\\text{ W}$\n",
+                "* **Bridge Pause**: Gaps $\\le 5\\text{ minutes}$ (soaking/drainage) merged\n",
+                "* **Minimum Duration**: $\\ge 15\\text{ minutes}$\n",
+                "* **Peak Power Validation**: Peak $\\ge 500\\text{ W}$ (confirms resistance water heating or spin extraction)"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Cross-household summary table\n",
+                "summary_df = pd.read_csv('../outputs/tables/wm_cross_house_summary.csv')\n",
+                "summary_df"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Representative 24-hour trace with detected cycle\n",
+                "Image('../outputs/plots/wm_representative_24h_trace.png')"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# High-resolution zoom of detected cycle signatures\n",
+                "Image('../outputs/plots/wm_detected_cycles_detail.png')"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Cross-household behavioral comparisons (Diurnal, Weekly, Duration, Energy)\n",
+                "Image('../outputs/plots/wm_cross_house_comparison.png')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Section 3: Appliance-Disaggregation Modeling (NILM)\n",
+                "We benchmarked our rolling-context XGBoost Regressor against an Always-Off baseline and a Diurnal Profile baseline on unseen test data using a strict contiguous chronological split (70% Train, 10% Validation, 20% Test)."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Benchmark metrics table\n",
+                "metrics_df = pd.read_csv('../outputs/tables/nilm_model_metrics.csv')\n",
+                "metrics_df"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Actual vs Predicted evaluation plot\n",
+                "Image('../outputs/plots/nilm_actual_vs_predicted_test.png')"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Top feature importances\n",
+                "Image('../outputs/plots/nilm_feature_importance.png')"
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Model failure case analysis\n",
+                "Image('../outputs/plots/nilm_failure_cases.png')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## Section 4: Utility Implications & Recommendations\n",
+                "For executive summaries and utility-facing policy recommendations, please see [`Recommendation.md`](../Recommendation.md):\n",
+                "1. **SmartShift Laundry**: Dynamic ToD tariff shifting (08:00–13:00 peak) + 30°C cold wash nudges.\n",
+                "2. **Measurement & Verification**: Randomized Controlled Trial (RCT) evaluated via Difference-in-Differences (DiD) econometric regression.\n",
+                "3. **Domain Transfer Challenges**: Top-loading washers without heaters, high overlapping AC/geyser loads, and grid voltage swings in India.\n",
+                "4. **15-Min / 30-Min Resolution Degradation**: Mathematical demonstration of transient pulse smearing and the shift to Factorial HMMs / matrix factorization."
+            ]
+        }
+    ],
+    "metadata": {
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3"
+        },
+        "language_info": {
+            "codemirror_mode": {"name": "ipython", "version": 3},
+            "file_extension": ".py",
+            "mimetype": "text/x-python",
+            "name": "python",
+            "nbconvert_exporter": "python",
+            "pygments_lexer": "ipython3",
+            "version": "3.14.3"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 4
+}
+
+out_path = Path("d:/Code/flock_ds/notebooks/refit_nilm_pipeline.ipynb")
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump(nb, f, indent=2)
+
+print(f"Jupyter notebook created at: {out_path}")

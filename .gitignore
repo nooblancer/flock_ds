@@ -1,0 +1,35 @@
+# Data files (too large for Git)
+data/
+*.7z
+outputs/house1_cleaned_1min.csv
+
+# Keep outputs/tables and outputs/plots tracked
+!outputs/tables/*.csv
+!outputs/tables/*.json
+!outputs/plots/*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Context docs (personal)
+context/
+

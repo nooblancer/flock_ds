@@ -1,0 +1,5 @@
+model,mae_watts,rmse_watts,rete_energy_pct,precision,recall,f1_score,total_true_kwh,total_pred_kwh
+Baseline 1: Always-Off (0W),11.02,138.58,100.0,0.0,0.0,0.0,29.52,0.0
+Baseline 2: Diurnal Profile,19.77,137.54,12.52,0.048,0.6803,0.0896,29.52,25.83
+XGBoost Regressor (Raw),9.55,84.68,5.35,0.2656,0.9194,0.4122,29.52,27.94
+XGBoost Regressor (Thresholded),8.94,84.67,10.97,0.2656,0.9194,0.4122,29.52,26.28

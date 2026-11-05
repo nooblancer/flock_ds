@@ -1,0 +1,163 @@
+# RESULTS.md — Washing Machine Analytics & Disaggregation Results
+
+## Section 1: Washing Machine Exploratory Data Analysis & Cycle Characterisation
+
+### 1.1 Methodology & Operational Definition of a Wash Cycle
+Washing machines exhibit multi-stage non-linear load profiles comprising water fill, resistance water heating, intermittent motor agitation, draining, and high-speed spin extraction. To reliably distinguish authentic washing events from sensor noise, standby power, and short power interruptions, we established a **physical thresholding and gap-bridging rule**:
+
+> **Operational Rule for Active Cycle Detection:**
+> A washing cycle is identified when:
+> 1. **Active Threshold:** Sub-metered active power exceeds **15 W** (distinguishing drum and pump operation from standby/parasitic display draw of 1–5 W).
+> 2. **Pause Tolerance (Bridge Gap):** Inactive periods of up to **5 minutes** (e.g., soaking periods, heating pauses, drain pauses) are bridged into the ongoing cycle.
+> 3. **Minimum Duration:** The aggregated event duration must be at least **15 minutes** (filtering out momentary appliance checks or accidental switch activations).
+> 4. **Peak Power Validation:** Power must achieve a minimum peak of **500 W** during the event, confirming physical water heating or high-torque centrifugal extraction.
+
+---
+
+### 1.2 Cross-Household Data Availability & Quality Summary
+We evaluated **5 diverse households** from the official cleaned REFIT dataset, resampled to continuous 1-minute intervals. 
+
+| House | Appliance Brand / Model | Date Range (1-Min Resolution) | Total Days | Total Readings (Mins) | Missing % | Zero / Off % | Standby % (1–15W) | Active % (≥15W) | Detected Cycles | Cycles / Week | Median Duration | Mean Energy / Cycle | Mean Peak Power |
+|:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **House 1** | Beko WMC6140 | 2013-10-09 → 2015-07-10 | 638 | 920,091 | 13.04% | 97.85% | 0.27% | 1.88% | **370** | **4.06** | 33.0 min | 0.334 kWh | 2,259 W |
+| **House 2** | LG F1289TD | 2013-09-17 → 2015-05-28 | 617 | 889,078 | 24.70% | 94.41% | 0.81% | 4.78% | **328** | **3.72** | 99.0 min | 0.605 kWh | 2,091 W |
+| **House 5** | Unknown / Beko | 2013-09-26 → 2015-07-06 | 648 | 933,593 | 13.25% | 52.51% | 40.31% | 7.18% | **621** | **6.71** | 42.0 min | 0.400 kWh | 2,044 W |
+| **House 7** | Bosch (Unknown model) | 2013-11-01 → 2015-07-08 | 613 | 882,970 | 13.68% | 91.20% | 0.60% | 8.20% | **850** | **9.71** | 60.0 min | 0.531 kWh | 2,076 W |
+| **House 20**| Unknown model | 2014-03-20 → 2015-06-23 | 460 | 662,864 | 6.06% | 97.22% | 0.31% | 2.47% | **197** | **3.00** | 74.0 min | 0.401 kWh | 2,260 W |
+
+#### Key Insights from Data Profiling
+1. **Low Active Duty Cycle:** Washing machines spend **91.8% to 98.1%** of their operational lifetime completely inactive or in deep standby. In House 1, the washing machine is active for only 1.88% of minutes. This extreme class imbalance ($\sim 1:50$ to $1:20$) is the defining machine-learning challenge for NILM disaggregation.
+2. **Parasitic Standby Variance:** House 5 displays a persistent **2–4 W standby draw** present for 40.31% of the observation period, reflecting modern digital display logic or delayed-timer modes left plugged in, whereas House 1 and House 20 draw < 0.5 W when idle.
+3. **Usage Frequency vs. Occupancy:** House 7 (occupancy of 4) runs an average of **9.71 cycles per week** (~1.4 washes/day), compared to House 1 (occupancy of 2) running **4.06 cycles per week**.
+
+---
+
+### 1.3 Interpretation of Required Visual Traces
+
+#### Trace (i): Representative 24-Hour Aggregate + Washing Machine Trace
+![Representative 24-Hour Trace](outputs/plots/wm_representative_24h_trace.png)
+*Figure 1: Whole-home aggregate load (blue) versus sub-metered washing machine load (red) for REFIT House 1 over a complete 24-hour cycle. The highlighted orange region denotes the automatically detected operational cycle.*
+
+* **Interpretation:** 
+  - A single, prominent wash cycle starts in the late morning (~11:00 AM).
+  - The cycle begins with a sharp, sustained spike reaching **~2,200–2,400 W** corresponding to the electric resistance heating element bringing water to the preset temperature.
+  - Notice that during the heating phase, the washing machine accounts for almost **100% of the whole-home aggregate demand**, creating an unmistakable rectangular pulse on the aggregate channel.
+  - Subsequently, power drops to 150–350 W with rhythmic oscillations (drum rotation and drain pump), before terminating with several short spin spikes.
+  - At other times of the day (e.g. evening meal hours), aggregate spikes occur without washing machine activity, caused by other cooking or heating appliances (kettle, toaster, oven).
+
+---
+
+#### Trace (ii): Detailed Signatures of Detected Washing Machine Cycles
+![Detected Cycle Signatures Zoom](outputs/plots/wm_detected_cycles_detail.png)
+*Figure 2: Three distinct washing machine cycles detected in House 1, highlighting the multi-state operating phases and variability in cycle duration and heating intensity.*
+
+* **Interpretation:**
+  - **Cycle 1 (Left):** Short/Express cycle (~33 minutes, 0.28 kWh, peak 2,260 W). Features a single heating phase lasting 8 minutes, followed by drum agitation and a quick final spin.
+  - **Cycle 2 (Middle):** Intensive wash cycle (~46 minutes, 0.41 kWh, peak 2,240 W). Features an extended heating phase indicative of a higher temperature wash (e.g., 60°C cottons), resulting in ~50% higher cumulative electrical consumption.
+  - **Cycle 3 (Right):** Extended cycle (~51 minutes, 0.38 kWh, peak 2,270 W). Features periodic soaking pauses where power drops to standby levels (~2 W), correctly bridged by our 5-minute pause tolerance rule without fragmenting the single wash cycle into multiple phantom events.
+
+---
+
+#### Trace (iii): Cross-House Comparison Analysis
+![Cross-House Comparison](outputs/plots/wm_cross_house_comparison.png)
+*Figure 3: Cross-household behavioral and electrical comparisons across Houses 1, 2, 5, 7, and 20. (Top-Left: Diurnal start probability; Top-Right: Weekly day-of-week distribution; Bottom-Left: Cycle duration distributions; Bottom-Right: Energy consumption per cycle).*
+
+* **Interpretation:**
+  1. **Diurnal Timing (Top-Left):** Across all households, washing machine activity is heavily concentrated between **08:00 AM and 13:00 PM**, with a secondary minor peak around **18:00–20:00 PM**. Overnight starts (00:00–06:00 AM) are virtually zero, highlighting that UK households in this sample do not leverage Economy-7 overnight tariffs for laundry.
+  2. **Day-of-Week Variation (Top-Right):** Usage patterns diverge across lifestyles: House 7 and House 5 maintain steady laundry activity across all 7 days with minor weekend spikes. In contrast, House 1 and House 2 exhibit pronounced **Sunday and Saturday spikes**, where weekend wash starts account for over 35% of all cycles.
+  3. **Cycle Duration Heterogeneity (Bottom-Left):** Median cycle durations vary substantially: House 1 defaults to rapid ~33-minute cycles; House 7 averages 60 minutes; while House 2 defaults to prolonged ~99-minute wash programs.
+  4. **Energy Consumption per Wash (Bottom-Right):** Mean energy per cycle ranges from **0.334 kWh in House 1** up to **0.605 kWh in House 2**. This ~1.8x difference is primarily driven by cycle duration and water heating temperature preferences rather than machine rated wattage (all have similar heating peaks of 2.0–2.3 kW).
+
+---
+
+## Section 2: Appliance Disaggregation Modeling (NILM)
+
+### 2.1 Problem Formulation & Dataset Split
+The objective of this disaggregation model is to estimate 1-minute active power (Watts) of the washing machine exclusively from the single-point whole-home Aggregate active power signal.
+
+* **Target Household:** REFIT House 1 (Beko WMC6140 washing machine).
+* **Observation Period:** 2013-10-09 to 2015-07-10 (803,773 valid 1-minute observations, excluding unmetered sensor outage intervals).
+
+#### Train / Validation / Test Splitting Strategy
+Random cross-validation or random time-shuffling is strictly invalid in high-frequency energy telemetry because:
+1. Adjacent 1-minute power readings exhibit severe temporal autocorrelation ($r > 0.85$).
+2. Rolling window features (lags and leads) span across neighboring minutes; random splitting causes instantaneous data leakage where the test set overlaps the training context window.
+
+To eliminate leakage, we implemented a **strict chronological block split**:
+* **Training Set (70%):** 562,641 minutes (2013-10-09 → 2014-12-26).
+* **Validation Set (10%):** 80,377 minutes (2014-12-26 → 2015-02-20) used for hyperparameter tuning and early stopping.
+* **Evaluation / Test Set (20%):** 160,755 continuous minutes (2015-02-20 → 2015-07-10) evaluated once as completely unseen future data. Active washing minutes ($\ge 15\text{ W}$) represent only **3,187 minutes (1.98%)** of the test set.
+
+---
+
+### 2.2 Feature Engineering: Causal & Temporal Context
+Because instantaneous aggregate power alone cannot differentiate a 2,000 W kettle (duration ~3 minutes) from a 2,000 W washing machine heater (duration ~15 minutes followed by drum rotation), we engineered **28 contextual features**:
+1. **Temporal Context Window (Lags & Leads):** Shifted aggregate readings covering $\pm 15\text{ minutes}$ ($t-15, t-10, t-5, t-3, t-2, t-1, t+1, t+2, t+3, t+5, t+10, t+15$).
+2. **Multi-Scale Rolling Statistics:** Centered rolling mean, standard deviation, minimum, maximum, and peak-to-peak dynamic range over 5m, 15m, 30m, and 60m windows to capture the macro-envelope of the washing cycle.
+3. **Instantaneous Signal Dynamics:** 1-minute, 5-minute, and 15-minute power differences ($\Delta P$) capturing sudden step changes.
+4. **Behavioral Priors:** Hour of day (cyclical sine/cosine transformation) and weekend indicator.
+
+---
+
+### 2.3 Model Benchmark & Comparison Against Baselines
+We compared the trained machine-learning model against two benchmark baselines on the **160,755-minute test set**:
+* **Baseline 1 (Always-Off):** Constantly predicts 0 W. This serves as the sanity check and highlights the danger of evaluating imbalanced NILM datasets with regression metrics alone.
+* **Baseline 2 (Diurnal Profile Baseline):** Predicts expected washing-machine power conditioned on hour of day and weekend status, learned from training data.
+* **XGBoost Regressor (Raw):** 300 gradient boosted trees (`max_depth=6`, `learning_rate=0.05`, `tree_method="hist"`).
+* **XGBoost Regressor (Thresholded):** Post-processed predictions where values $< 10\text{ W}$ are clamped to 0 W to eliminate continuous synthetic standby leakage.
+
+#### Comprehensive Evaluation Results
+
+| Model | MAE (W) | RMSE (W) | F1-Score | Precision | Recall | Total True (kWh) | Total Pred (kWh) | Energy Error (RETE %) |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Baseline 1: Always-Off (0 W)** | 11.02 W | 138.58 W | 0.0000 | 0.0000 | 0.0000 | 29.52 kWh | 0.00 kWh | 100.00% |
+| **Baseline 2: Diurnal Profile** | 19.77 W | 137.54 W | 0.0896 | 0.0480 | 0.6803 | 29.52 kWh | 25.83 kWh | 12.52% |
+| **XGBoost Regressor (Raw)** | **9.55 W** | **84.68 W** | **0.4122** | **0.2656** | **0.9194** | **29.52 kWh** | **27.94 kWh** | **5.35%** |
+| **XGBoost Regressor (Thresholded)**| **8.94 W** | **84.67 W** | **0.4122** | **0.2656** | **0.9194** | **29.52 kWh** | **26.28 kWh** | **10.97%** |
+
+#### Why These Metrics Are Critical for Utility Disaggregation
+- **MAE vs. Sparsity Paradox:** Notice that Baseline 1 (Always-Off) achieves an deceptively low MAE of **11.02 W** simply because the washing machine is idle 98% of the time. However, it detects 0 cycles ($F_1 = 0$) and misses 100% of consumed electrical energy!
+- **RMSE:** RMSE penalizes large errors during active cycles. XGBoost slashes RMSE from **138.58 W down to 84.68 W (38.9% improvement)**.
+- **Recall (0.9194):** The XGBoost model successfully detects **91.94% of all active washing-machine operating minutes** in the test set.
+- **Relative Error in Total Energy (RETE):** For utility billing and carbon attribution, cumulative energy matters most. Raw XGBoost estimated **27.94 kWh vs. 29.52 kWh actual (an energy error of only 5.35%)**, whereas the Diurnal baseline missed cycle magnitudes.
+
+---
+
+### 2.4 Actual vs. Predicted Disaggregation Trace
+![Actual vs. Predicted Evaluation Plot](outputs/plots/nilm_actual_vs_predicted_test.png)
+*Figure 4: Unseen test set 48-hour evaluation trace in REFIT House 1. (Top: Household Aggregate active power; Middle: Actual washing machine load in black vs. XGBoost disaggregation in dashed red and Diurnal baseline in dotted orange; Bottom: Absolute disaggregation error profile).*
+
+* **Interpretation:**
+  - When a wash cycle commences (midday on both days), whole-house aggregate spikes to ~2,200 W.
+  - The XGBoost model immediately locks onto the signature, accurately tracking the initial **2,200 W heating element spike**, holding the plateau, and stepping down in tandem with the actual machine.
+  - Baseline 2 (Diurnal Profile) outputs an uninformative flat prediction of ~20–30 W that completely fails to capture event timing or power amplitude.
+  - During the rest of the 48-hour period, despite various other household aggregate spikes (kettles, cooking, entertainment), the thresholded XGBoost model correctly outputs 0 W, maintaining high specificity.
+
+---
+
+### 2.5 Feature Importance Analysis
+![Feature Importance](outputs/plots/nilm_feature_importance.png)
+*Figure 5: Top 15 most influential features in the XGBoost disaggregation model ranked by Gini gain.*
+
+* **Key Findings:**
+  1. The single most decisive feature is **`agg_roll_mean_15`** (15-minute rolling average aggregate power), followed closely by **`agg_roll_mean_30`** and **`agg_roll_max_15`**.
+  2. This confirms the physical intuition of NILM: short appliances (e.g., a 2,000 W kettle boiling for 2 minutes) have a low 15-minute rolling average (~250 W), whereas a washing machine heating cycle pushes the 15-minute rolling mean above 1,500 W. The multi-scale rolling statistics provide the temporal filter that separates water heating from rapid kitchen cooking loads.
+  3. Short lags (`agg_lag_-1`, `agg_lag_-2`) and dynamic differences (`agg_diff_5`) govern the precise boundary detection (start and end times of the cycle).
+
+---
+
+### 2.6 Detailed Failure Mode Analysis
+![NILM Failure Modes Analysis](outputs/plots/nilm_failure_cases.png)
+*Figure 6: Visualisation of typical failure cases on test data. (Left: Failure Mode A — False Positive from overlapping resistive heating load; Right: Failure Mode B — Under-prediction / missed motor agitation).*
+
+#### Failure Mode A: Overlapping Resistive Heating Signatures (False Positives)
+* **Mechanism:** In UK homes, high-power resistive loads (electric showers, immersion heaters, ovens, dishwashers, and space heaters) draw active power in the exact same 1.8–3.0 kW band as washing machine heating elements.
+* **Manifestation:** In Figure 6 (Left), an unmonitored resistive load (likely an electric oven or space heater) operated continuously for ~25 minutes. Because its duration and power magnitude closely mimicked a wash cycle heating phase, the model predicted a phantom washing machine pulse of ~300–600 W.
+* **Mitigation Strategy:** In a production setting, integrating reactive power (VAR) or high-frequency harmonics ($\text{kHz}$ sampling) would differentiate purely resistive loads (PF $\approx 1.0$) from inductive washing machine electric motors (PF $\approx 0.75\text{--}0.85$). With 1-minute real power alone, incorporating sub-metered dishwasher data or whole-house signature correlation reduces false positives.
+
+#### Failure Mode B: Low-Power Motor Agitation & Standby Transitions (Under-Prediction)
+* **Manifestation:** In Figure 6 (Right), during the agitation and rinse phases between heating and final spinning, the washing machine motor pulses between 100 W and 350 W for 15–30 seconds.
+* **Mechanism:** When the whole-home aggregate background is noisy (e.g. televisions, computers, refrigeration cycling simultaneously), these 150 W motor pulses blend into the noise floor of the house.
+* **Result:** The model accurately reconstructs the high-energy water heating phase (capturing 95% of energy), but slightly under-estimates the tail of the drum agitation phase, occasionally dropping to 0 W a few minutes before the cycle physically terminates.
+
+
