@@ -56,7 +56,7 @@ def _load_and_concat() -> pd.DataFrame:
     p2["_source"] = "part2"
 
     df = pd.concat([p1, p2], ignore_index=True)
-    df["Time"] = pd.to_datetime(df["Time"])
+    df["Time"] = pd.to_datetime(df["Time"], format="%Y-%m-%d %H:%M:%S")
     return df
 
 

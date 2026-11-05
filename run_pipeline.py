@@ -25,7 +25,10 @@ if hasattr(sys.stderr, "reconfigure"):
 
 sys.path.insert(0, ".")
 os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["MPLCONFIGDIR"] = os.path.expanduser("~/.matplotlib_tmp")
+from src.config import OUTPUT_DIR
+cache_dir = OUTPUT_DIR / ".matplotlib_cache"
+cache_dir.mkdir(parents=True, exist_ok=True)
+os.environ["MPLCONFIGDIR"] = str(cache_dir)
 
 def run_stage_1():
     print("\n" + "=" * 70)

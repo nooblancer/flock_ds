@@ -132,20 +132,20 @@ Because a single static power measurement cannot differentiate a 2,000 W kettle 
 
 ### Architecture Trade-Offs
 * **XGBoost vs. Deep Sequence Models (Seq2Point / CNN-LSTM):** While Seq2Point architectures (Kelly & Knottenbelt, 2018) are popular in academic literature, tree-based gradient boosting (XGBoost) with explicit multi-scale rolling statistics trains in **under 30 seconds on CPU**, requires zero GPU infrastructure, delivers clear feature interpretability (Gini importance), and achieves comparable or superior energy attribution accuracy.
-* **Regression-Only Metrics vs. Event Detection:** Under extreme class imbalance (~98% inactive), the naive **Always-Off baseline achieves a deceptive MAE of 11.02 W** despite detecting zero cycles ($F_1 = 0$) and missing 100% of consumed electrical energy! We therefore evaluate across dual dimensions:
-  * **Regression Metrics:** MAE, RMSE, and Relative Error in Total Energy (RETE).
-  * **Event Classification Metrics:** Precision, Recall, and $F_1$-Score at the active threshold ($P \ge 15\text{ W}$).
+* **Regression-Only Metrics vs. Dual-Tier Event Detection:** Under extreme class imbalance (~98% inactive), the naive **Always-Off baseline achieves a deceptive MAE of 11.02 W** despite detecting zero cycles ($F_{1,\text{event}} = 0$) and missing 100% of consumed electrical energy! We therefore evaluate across two complementary tiers:
+  * **Sample-Level Continuous Metrics:** MAE (Watts), RMSE (Watts), and Relative Error in Total Energy (RETE in %).
+  * **Event-Based Macro Cycle Metrics:** 1-to-1 bipartite cycle matching within a 5-minute start/end temporal tolerance window.
 
-### Empirical Performance Summary (Unseen Test Set)
+### Empirical Performance Summary (Unseen Test Set: 160,755 mins, 77 ground-truth cycles)
 
-| Model | MAE (W) | RMSE (W) | $F_1$-Score | Precision | Recall | Energy Error (RETE %) |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Baseline 1: Always-Off (0 W)** | 11.02 W | 138.58 W | 0.0000 | 0.0000 | 0.0000 | 100.00% |
-| **Baseline 2: Diurnal Profile** | 19.77 W | 137.54 W | 0.0896 | 0.0480 | 0.6803 | 12.52% |
-| **XGBoost Regressor (Raw)** | **9.55 W** | **84.68 W** | **0.4122** | **0.2656** | **0.9194** | **5.35%** |
-| **XGBoost Regressor (Thresholded)**| **8.94 W** | **84.67 W** | **0.4122** | **0.2656** | **0.9194** | **10.97%** |
+| Model | MAE (W) | RMSE (W) | RETE (%) | Total Pred | Sample F1 | Event Precision | Event Recall | Event F1 | Matched Cycles |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Baseline 1: Always-Off (0 W)** | 11.02 W | 138.58 W | 100.00% | 0.00 kWh | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0 / 77 |
+| **Baseline 2: Diurnal Profile** | 19.77 W | 137.54 W | 12.52% | 25.83 kWh | 0.0896 | 0.0000 | 0.0000 | 0.0000 | 0 / 77 |
+| **XGBoost Regressor (Raw)** | **9.56 W** | **84.37 W** | **4.86%** | **28.09 kWh** | **0.4123** | **0.7126** | **0.8052** | **0.7561** | **62 / 77** |
+| **XGBoost Regressor (Thresholded)**| **8.93 W** | **84.37 W** | **10.71%** | **26.36 kWh** | **0.4123** | **0.7126** | **0.8052** | **0.7561** | **62 / 77** |
 
-* **Key Takeaway:** XGBoost captures **91.94% of active operating minutes** and estimates cumulative test energy with **94.65% accuracy (RETE of 5.35%)**, outperforming heuristic baselines by 38.9% in RMSE.
+* **Key Takeaway:** XGBoost captures **80.52% of all ground-truth washing cycles** (62/77 cycles) within a $\pm 5$-minute tolerance window with an Event F1 of **0.7561**, while estimating cumulative electrical consumption within **4.86% of ground truth (RETE)** under strict zero-leakage pre-split partitioning.
 
 ---
 
@@ -171,3 +171,4 @@ In accordance with academic integrity and assignment guidelines:
 1. **REFIT Dataset:** Murray, D., Liao, J., Stankovic, L., Stankovic, V., Hauxwell-Baldwin, R., Wilson, C., Coleman, M., Kane, T., & Firth, S. (2015). *A data management platform for personalised real-time energy feedback*. In Proceedings of the 8th International Conference on Energy Efficiency in Domestic Appliances and Lighting (EEDAL).
 2. **Seq2Point Disaggregation:** Kelly, J., & Knottenbelt, W. (2015). *Neural NILM: Deep neural networks applied to energy disaggregation*. In Proceedings of the 2nd ACM International Conference on Embedded Systems for Energy-Efficient Built Environments (BuildSys), pp. 55–64.
 3. **NILM Benchmark Metrics:** Batra, N., Kelly, J., Parson, O., Dutta, H., Knottenbelt, W., Rogers, A., Singh, A., & Srivastava, M. (2014). *NILMTK: An open source toolkit for non-intrusive load monitoring*. In Proceedings of the 5th International Conference on Future Energy Systems (e-Energy), pp. 265–276.
+

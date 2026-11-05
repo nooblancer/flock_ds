@@ -29,8 +29,8 @@ def main():
     print(f"    Part1: {len(p1):,} rows  |  Part2: {len(p2):,} rows")
 
     # Parse timestamps
-    p1["Time"] = pd.to_datetime(p1["Time"])
-    p2["Time"] = pd.to_datetime(p2["Time"])
+    p1["Time"] = pd.to_datetime(p1["Time"], format="%Y-%m-%d %H:%M:%S")
+    p2["Time"] = pd.to_datetime(p2["Time"], format="%Y-%m-%d %H:%M:%S")
 
     print(f"    Part1 range: {p1['Time'].min()} -> {p1['Time'].max()}")
     print(f"    Part2 range: {p2['Time'].min()} -> {p2['Time'].max()}")
