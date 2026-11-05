@@ -138,14 +138,16 @@ Because a single static power measurement cannot differentiate a 2,000 W kettle 
 
 ### Empirical Performance Summary (Unseen Test Set: 160,755 mins, 77 ground-truth cycles)
 
-| Model | MAE (W) | RMSE (W) | RETE (%) | Total Pred | Sample F1 | Event Precision | Event Recall | Event F1 | Matched Cycles |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Baseline 1: Always-Off (0 W)** | 11.02 W | 138.58 W | 100.00% | 0.00 kWh | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0 / 77 |
-| **Baseline 2: Diurnal Profile** | 19.77 W | 137.54 W | 12.52% | 25.83 kWh | 0.0896 | 0.0000 | 0.0000 | 0.0000 | 0 / 77 |
-| **XGBoost Regressor (Raw)** | **9.56 W** | **84.37 W** | **4.86%** | **28.09 kWh** | **0.4123** | **0.7126** | **0.8052** | **0.7561** | **62 / 77** |
-| **XGBoost Regressor (Thresholded)**| **8.93 W** | **84.37 W** | **10.71%** | **26.36 kWh** | **0.4123** | **0.7126** | **0.8052** | **0.7561** | **62 / 77** |
+| Model | MAE (W) | RMSE (W) | RETE (%) | Idle Bleed (kWh) | Peak Deficit (kWh) | Sample F1 | Event Prec | Event Rec | Event F1 | Matched Cycles |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Baseline 1: Always-Off (0 W)** | 11.02 W | 138.58 W | 100.00% | 0.00 | 24.23 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0 / 77 |
+| **Baseline 2: Diurnal Profile** | 19.77 W | 137.54 W | 12.52% | 24.58 | 23.93 | 0.0896 | 0.0000 | 0.0000 | 0.0000 | 0 / 77 |
+| **XGBoost (Symmetric MSE - Raw)** | **9.56 W** | 84.37 W | **4.86%** | 11.29 | 10.92 | **0.4123** | **0.7126** | 0.8052 | **0.7561** | 62 / 77 |
+| **XGBoost (Symmetric MSE - Thresholded)**| **8.93 W** | 84.37 W | 10.71% | 9.57 | 10.92 | **0.4123** | **0.7126** | 0.8052 | **0.7561** | 62 / 77 |
+| **XGBoost (Asymmetric Loss - Raw)** | 10.80 W | 83.33 W | 15.09% | 15.55 | **9.96** | 0.3611 | 0.6275 | **0.8312** | 0.7151 | **64 / 77** |
+| **XGBoost (Asymmetric Loss - Thresholded)**| 9.94 W | **83.32 W** | **7.20%** | 13.23 | **9.96** | 0.3611 | 0.6275 | **0.8312** | 0.7151 | **64 / 77** |
 
-* **Key Takeaway:** XGBoost captures **80.52% of all ground-truth washing cycles** (62/77 cycles) within a $\pm 5$-minute tolerance window with an Event F1 of **0.7561**, while estimating cumulative electrical consumption within **4.86% of ground truth (RETE)** under strict zero-leakage pre-split partitioning.
+* **Resolving the Thresholding Paradox:** In standard symmetric MSE, raw RETE was artificially suppressed (4.86%) because 11.29 kWh of low-wattage idle false positives serendipitously cancelled out 10.92 kWh of peak under-predictions. Thresholding (<10 W) removed the idle noise, exposing the uncompensated peak deficit and causing RETE to degrade to 10.71%. Our custom **Asymmetric Peak-Weighted Loss** ($2.0\times$ penalty on active peaks) penalizes peak under-predictions, boosting Event Recall to **83.12% (64/77 cycles)**, lowering Test RMSE to **83.32 W**, and achieving an honest, robust post-thresholded RETE of **7.20%**!
 
 ---
 
