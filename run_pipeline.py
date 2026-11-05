@@ -59,17 +59,34 @@ def run_stage_3():
     from src.washing_machine_eda import run_eda
     run_eda([1, 2, 5, 7, 20])
 
-def run_stage_4():
+def run_stage_4(
+    max_pause: int = 5,
+    stitch_method: str = "dynamic_bridge",
+    active_thresh: float = 15.0,
+    tolerance_min: int = 5,
+):
     print("\n" + "=" * 70)
     print("  RUNNING STAGE 4: NILM Disaggregation Modeling & Baseline Benchmark")
+    print(f"  Configuration: method={stitch_method}, max_pause={max_pause}m, active_thresh={active_thresh}W, tolerance={tolerance_min}m")
     print("=" * 70)
     from src.nilm_model import run_nilm_pipeline
-    run_nilm_pipeline(house_id=1)
+    run_nilm_pipeline(
+        house_id=1,
+        active_threshold_watts=active_thresh,
+        max_pause_min=max_pause,
+        tolerance_min=tolerance_min,
+        cycle_stitch_method=stitch_method,
+    )
 
 def main():
     parser = argparse.ArgumentParser(description="Flock Energy NILM End-to-End Pipeline")
     parser.add_argument("--all", action="store_true", help="Run entire end-to-end pipeline")
     parser.add_argument("--stage", type=int, choices=[1, 2, 3, 4], help="Run a specific stage (1-4)")
+    parser.add_argument("--max-pause", type=int, default=5, help="Bridgeable pause duration in minutes (e.g. 5, 8, 10)")
+    parser.add_argument("--stitch-method", choices=["dynamic_bridge", "dbscan"], default="dynamic_bridge",
+                        help="Cycle stitching method: dynamic_bridge or dbscan")
+    parser.add_argument("--active-thresh", type=float, default=15.0, help="Active power threshold (W)")
+    parser.add_argument("--tolerance-min", type=int, default=5, help="Event matching tolerance window (minutes)")
     args = parser.parse_args()
 
     start_time = time.time()
@@ -81,7 +98,12 @@ def main():
         run_stage_1()
         run_stage_2()
         run_stage_3()
-        run_stage_4()
+        run_stage_4(
+            max_pause=args.max_pause,
+            stitch_method=args.stitch_method,
+            active_thresh=args.active_thresh,
+            tolerance_min=args.tolerance_min,
+        )
     elif args.stage == 1:
         run_stage_1()
     elif args.stage == 2:
@@ -89,7 +111,12 @@ def main():
     elif args.stage == 3:
         run_stage_3()
     elif args.stage == 4:
-        run_stage_4()
+        run_stage_4(
+            max_pause=args.max_pause,
+            stitch_method=args.stitch_method,
+            active_thresh=args.active_thresh,
+            tolerance_min=args.tolerance_min,
+        )
 
     elapsed = time.time() - start_time
     print("\n" + "#" * 70)

@@ -117,7 +117,7 @@ def create_nilm_features(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 2. Event-Based Macro Cycle Evaluation (Matching with Tolerance)
+# 2. Event-Based Macro Cycle Evaluation (Dynamic Matching & Tolerance)
 # ────────────────────────────────────────────────────────────────────────────
 
 def match_and_evaluate_events(
@@ -127,14 +127,34 @@ def match_and_evaluate_events(
 ) -> dict:
     """Evaluate event detection by matching predicted cycles to ground-truth cycles.
 
-    Matching Criteria:
-    ------------------
+    Matching Criteria & Tolerance Window:
+    ------------------------------------
     A predicted cycle matches a ground-truth cycle if:
       1. Their operating intervals overlap in time: max(p_start, t_start) <= min(p_end, t_end)
          OR
       2. Their cycle start times agree within `tolerance_min` (e.g. +/- 5 minutes).
 
     Each predicted cycle matches at most one ground-truth cycle (1-to-1 greedy matching).
+
+    Probabilistic Transition Pathway:
+    ---------------------------------
+    While greedy matching with fixed tolerance is the standard in NILMTK benchmarks,
+    real-world smart meter deployments benefit from probabilistic bipartite matching:
+      - Calculating soft temporal intersection-over-union (tIoU) scores:
+          tIoU(P, T) = |P ∩ T| / |P ∪ T|
+      - Utilizing the Hungarian Algorithm (Munkres algorithm) to maximize global tIoU
+        rather than greedy local assignment.
+      - Incorporating energy error weighting so matches that capture the true energy
+        are favored over trivial threshold crossings.
+
+    Parameters
+    ----------
+    true_cycles : list[dict]
+        Ground-truth appliance cycles.
+    pred_cycles : list[dict]
+        Predicted appliance cycles.
+    tolerance_min : int, default 5
+        Temporal tolerance window in minutes for cycle onset matching.
 
     Returns
     -------
@@ -272,8 +292,30 @@ def evaluate_predictions(
     test_index: pd.DatetimeIndex,
     model_name: str,
     true_cycles: list[dict],
+    active_threshold_watts: float = ACTIVE_THRESHOLD_WATTS,
+    max_pause_min: int = 5,
+    min_duration_min: int = 15,
+    min_peak_watts: float = 500.0,
+    tolerance_min: int = 5,
+    cycle_stitch_method: str = "dynamic_bridge",
 ) -> dict:
-    """Compute comprehensive sample-level, event-level, and energy cancellation metrics."""
+    """Compute comprehensive sample-level, event-level, and energy cancellation metrics.
+
+    Dynamic Cycle Stitching Parameters:
+    ----------------------------------
+    active_threshold_watts : float
+        Minimum active power separating drum motion from standby.
+    max_pause_min : int
+        Maximum allowable pause between active readings (e.g. soaking phase).
+    min_duration_min : int
+        Minimum length in minutes to qualify as a valid wash cycle.
+    min_peak_watts : float
+        Minimum peak power required across the cycle (water heating confirmation).
+    tolerance_min : int
+        Temporal tolerance window for matching cycle start/end bounds.
+    cycle_stitch_method : {"dynamic_bridge", "dbscan"}
+        Algorithm for temporal grouping: vectorized bridge or 1D density clustering.
+    """
     y_pred_clipped = np.clip(y_pred, 0, None)
 
     # 1. Continuous Regression Metrics
@@ -293,18 +335,25 @@ def evaluate_predictions(
     peak_deficit_kwh = float(np.sum(np.maximum(0, y_true[peak_mask] - y_pred_clipped[peak_mask])) / 60.0 / 1000.0)
     energy_bias_kwh = float((total_pred_energy - total_true_energy) / 60.0 / 1000.0)
 
-    # 3. Sample-Level Classification Metrics (P >= 15W)
-    y_true_bin = (y_true >= ACTIVE_THRESHOLD_WATTS).astype(int)
-    y_pred_bin = (y_pred_clipped >= ACTIVE_THRESHOLD_WATTS).astype(int)
+    # 3. Sample-Level Classification Metrics (P >= active_threshold_watts)
+    y_true_bin = (y_true >= active_threshold_watts).astype(int)
+    y_pred_bin = (y_pred_clipped >= active_threshold_watts).astype(int)
 
     sample_precision = precision_score(y_true_bin, y_pred_bin, zero_division=0)
     sample_recall = recall_score(y_true_bin, y_pred_bin, zero_division=0)
     sample_f1 = f1_score(y_true_bin, y_pred_bin, zero_division=0)
 
-    # 4. Event-Level Macro Cycle Metrics
+    # 4. Event-Level Macro Cycle Metrics (Dynamic Stitching & Tolerance)
     pred_s = pd.Series(y_pred_clipped, index=test_index)
-    pred_cycles = detect_washing_cycles(pred_s)
-    event_metrics = match_and_evaluate_events(true_cycles, pred_cycles, tolerance_min=5)
+    pred_cycles = detect_washing_cycles(
+        pred_s,
+        on_thresh=active_threshold_watts,
+        min_duration=min_duration_min,
+        max_pause=max_pause_min,
+        min_peak=min_peak_watts,
+        method=cycle_stitch_method,
+    )
+    event_metrics = match_and_evaluate_events(true_cycles, pred_cycles, tolerance_min=tolerance_min)
 
     return {
         "model": model_name,
@@ -329,12 +378,22 @@ def evaluate_predictions(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 4. Main Model Pipeline
+# 5. Main Model Pipeline
 # ────────────────────────────────────────────────────────────────────────────
 
-def run_nilm_pipeline(house_id: int = 1):
+def run_nilm_pipeline(
+    house_id: int = 1,
+    active_threshold_watts: float = ACTIVE_THRESHOLD_WATTS,
+    max_pause_min: int = 5,
+    min_duration_min: int = 15,
+    min_peak_watts: float = 500.0,
+    tolerance_min: int = 5,
+    cycle_stitch_method: str = "dynamic_bridge",
+    under_penalty: float = 2.0,
+):
     print("=" * 70, flush=True)
     print(f"  Appliance Disaggregation (NILM) Pipeline — House {house_id}", flush=True)
+    print(f"  Stitching Method: {cycle_stitch_method} | Pause Bridge: {max_pause_min}m | Active Thresh: {active_threshold_watts}W", flush=True)
     print("=" * 70, flush=True)
 
     # Load cleaned 1-min data
@@ -383,19 +442,36 @@ def run_nilm_pipeline(house_id: int = 1):
     y_test = df_test[wm_col].values
     test_index = df_test.index
 
-    # Pre-extract ground truth test cycles for macro event evaluation
+    # Pre-extract ground truth test cycles for macro event evaluation (dynamic parameters)
     true_test_s = pd.Series(y_test, index=test_index)
-    true_cycles = detect_washing_cycles(true_test_s)
-    print(f"  Ground-truth washing cycles in test set: {len(true_cycles)} cycles", flush=True)
-    print(f"  Active test minutes (>=15W): {(y_test >= ACTIVE_THRESHOLD_WATTS).sum():,} "
-          f"({(y_test >= ACTIVE_THRESHOLD_WATTS).mean()*100:.2f}%)", flush=True)
+    true_cycles = detect_washing_cycles(
+        true_test_s,
+        on_thresh=active_threshold_watts,
+        min_duration=min_duration_min,
+        max_pause=max_pause_min,
+        min_peak=min_peak_watts,
+        method=cycle_stitch_method,
+    )
+    print(f"  Ground-truth washing cycles in test set: {len(true_cycles)} cycles "
+          f"(method={cycle_stitch_method}, pause={max_pause_min}m, thresh={active_threshold_watts}W)", flush=True)
+    print(f"  Active test minutes (>={active_threshold_watts}W): {(y_test >= active_threshold_watts).sum():,} "
+          f"({(y_test >= active_threshold_watts).mean()*100:.2f}%)", flush=True)
+
+    eval_kwargs = dict(
+        active_threshold_watts=active_threshold_watts,
+        max_pause_min=max_pause_min,
+        min_duration_min=min_duration_min,
+        min_peak_watts=min_peak_watts,
+        tolerance_min=tolerance_min,
+        cycle_stitch_method=cycle_stitch_method,
+    )
 
     metrics_list = []
 
     # ── Baseline 1: Always-Off (0 W) ────────────────────────────────────
     print("\n[4] Evaluating Baseline 1: Always-Off (0 W) ...", flush=True)
     y_pred_base1 = np.zeros_like(y_test)
-    m1 = evaluate_predictions(y_test, y_pred_base1, test_index, "Baseline 1: Always-Off (0W)", true_cycles)
+    m1 = evaluate_predictions(y_test, y_pred_base1, test_index, "Baseline 1: Always-Off (0W)", true_cycles, **eval_kwargs)
     metrics_list.append(m1)
 
     # ── Baseline 2: Diurnal Usage Profile ───────────────────────────────
@@ -406,7 +482,7 @@ def run_nilm_pipeline(house_id: int = 1):
 
     test_keys = list(zip(test_index.hour, (test_index.dayofweek >= 5).astype(int)))
     y_pred_base2 = np.array([profile.get(k, 0.0) for k in test_keys])
-    m2 = evaluate_predictions(y_test, y_pred_base2, test_index, "Baseline 2: Diurnal Profile", true_cycles)
+    m2 = evaluate_predictions(y_test, y_pred_base2, test_index, "Baseline 2: Diurnal Profile", true_cycles, **eval_kwargs)
     metrics_list.append(m2)
 
     # ── Model 3: XGBoost Regressor (Symmetric MSE) ──────────────────────
@@ -434,13 +510,13 @@ def run_nilm_pipeline(house_id: int = 1):
     y_pred_sym_thresh = y_pred_sym_raw.copy()
     y_pred_sym_thresh[y_pred_sym_thresh < 10.0] = 0.0
 
-    m3 = evaluate_predictions(y_test, y_pred_sym_raw, test_index, "XGBoost (Symmetric MSE - Raw)", true_cycles)
-    m4 = evaluate_predictions(y_test, y_pred_sym_thresh, test_index, "XGBoost (Symmetric MSE - Thresholded)", true_cycles)
+    m3 = evaluate_predictions(y_test, y_pred_sym_raw, test_index, "XGBoost (Symmetric MSE - Raw)", true_cycles, **eval_kwargs)
+    m4 = evaluate_predictions(y_test, y_pred_sym_thresh, test_index, "XGBoost (Symmetric MSE - Thresholded)", true_cycles, **eval_kwargs)
     metrics_list.extend([m3, m4])
 
     # ── Model 4: XGBoost Regressor (Asymmetric Peak-Weighted Loss) ───────
     print("\n[7] Training Leak-Free XGBoost Regressor (Asymmetric Peak-Weighted Loss) ...", flush=True)
-    asym_obj = asymmetric_mse_objective(under_penalty=2.0, active_threshold=500.0)
+    asym_obj = asymmetric_mse_objective(under_penalty=under_penalty, active_threshold=min_peak_watts)
     model_asym = xgb.XGBRegressor(
         objective=asym_obj,
         n_estimators=300,
@@ -466,8 +542,8 @@ def run_nilm_pipeline(house_id: int = 1):
     y_pred_asym_thresh = y_pred_asym_raw.copy()
     y_pred_asym_thresh[y_pred_asym_thresh < 10.0] = 0.0
 
-    m5 = evaluate_predictions(y_test, y_pred_asym_raw, test_index, "XGBoost (Asymmetric Loss - Raw)", true_cycles)
-    m6 = evaluate_predictions(y_test, y_pred_asym_thresh, test_index, "XGBoost (Asymmetric Loss - Thresholded)", true_cycles)
+    m5 = evaluate_predictions(y_test, y_pred_asym_raw, test_index, "XGBoost (Asymmetric Loss - Raw)", true_cycles, **eval_kwargs)
+    m6 = evaluate_predictions(y_test, y_pred_asym_thresh, test_index, "XGBoost (Asymmetric Loss - Thresholded)", true_cycles, **eval_kwargs)
     metrics_list.extend([m5, m6])
 
     # Default model for subsequent feature importance and failure mode plots
@@ -636,4 +712,25 @@ def run_nilm_pipeline(house_id: int = 1):
 
 
 if __name__ == "__main__":
-    run_nilm_pipeline(house_id=1)
+    import argparse
+    parser = argparse.ArgumentParser(description="REFIT NILM Disaggregation Model")
+    parser.add_argument("--house-id", type=int, default=1, help="House ID")
+    parser.add_argument("--active-thresh", type=float, default=15.0, help="Active power threshold (W)")
+    parser.add_argument("--max-pause", type=int, default=5, help="Bridgeable pause duration in minutes (e.g. 5, 8, 10)")
+    parser.add_argument("--min-duration", type=int, default=15, help="Minimum cycle duration in minutes")
+    parser.add_argument("--tolerance-min", type=int, default=5, help="Event matching tolerance window (minutes)")
+    parser.add_argument("--stitch-method", choices=["dynamic_bridge", "dbscan"], default="dynamic_bridge",
+                        help="Cycle stitching algorithm: dynamic_bridge (fast 1D) or dbscan (1D density clustering)")
+    parser.add_argument("--under-penalty", type=float, default=2.0, help="Asymmetric under-prediction penalty")
+    args = parser.parse_args()
+
+    run_nilm_pipeline(
+        house_id=args.house_id,
+        active_threshold_watts=args.active_thresh,
+        max_pause_min=args.max_pause,
+        min_duration_min=args.min_duration,
+        min_peak_watts=500.0,
+        tolerance_min=args.tolerance_min,
+        cycle_stitch_method=args.stitch_method,
+        under_penalty=args.under_penalty,
+    )

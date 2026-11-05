@@ -194,4 +194,30 @@ $$L_{\text{asym}}(y, \hat{y}) = \frac{1}{2} w(y, \hat{y}) (\hat{y} - y)^2, \quad
 * **Mechanism:** When the whole-home aggregate background is elevated or fluctuating (e.g. televisions, computers, refrigeration cycling simultaneously), these 150 W motor pulses blend into the aggregate noise floor.
 * **Result:** The model reliably reconstructs the primary water heating phase (capturing ~90% of total cycle energy), but slightly under-estimates the tail of the drum agitation phase, occasionally dropping to 0 W a few minutes before the cycle physically terminates.
 
+---
+
+### 2.8 Fragility of Hardcoded Cycle-Stitching Heuristics & Density-Based Grouping Pathway
+
+A subtle operational fragility in event-based NILM evaluation stems from **rigid deterministic thresholding and hardcoded gap-bridging heuristics**:
+* **The Soaking Pause Failure:** Modern residential washing machines frequently employ eco-wash, wool, or stain-removal programs that feature intentional drum-soaking pauses lasting **6 to 10 minutes** where active power drops to near-zero (standby level $\le 5\text{ W}$).
+* **Empirical Fragmentation Analysis:** Testing pause thresholds across House 1 test telemetry reveals direct sensitivity:
+  - Strict 3-minute gap limit: **84 cycles detected** (extensive over-fragmentation).
+  - Hardcoded 5-minute gap limit: **77 cycles detected** (multiple single cycles split into separate heating vs. spin events).
+  - Dynamic 8-minute gap limit: **71 cycles detected** (consolidating genuine multi-stage washes).
+  - Dynamic 10-minute gap limit: **69 cycles detected**.
+
+#### Algorithmic Upgrade: Dynamic Gap Bridging & 1D DBSCAN
+To eliminate brittle magic numbers, we refactored cycle extraction across [`src/washing_machine_eda.py`](file:///d:/Code/flock_ds/src/washing_machine_eda.py) and [`src/nilm_model.py`](file:///d:/Code/flock_ds/src/nilm_model.py) to support fully dynamic parameters:
+1. **Configurable Keyword Arguments:** `on_thresh` (W), `max_pause` (min), `min_duration` (min), `min_peak` (W), and `tolerance_min` (min) can be tuned dynamically via API or CLI flags (`--max-pause`, `--stitch-method`).
+2. **1D Temporal Density Clustering (DBSCAN):** 
+   - Projects discrete active minutes $T_{\text{on}} = \{t \mid P(t) \ge P_{\text{thresh}}\}$ into a 1D coordinate space.
+   - Fits DBSCAN with neighborhood radius $\epsilon = \text{max\_pause} + 1$ and $\text{min\_samples} = 1$.
+   - Clusters contiguous high-density active regions across time, bridging arbitrary internal pauses $\le \text{max\_pause}$ without iterative row-by-row state machines.
+   - When evaluated with `eps=8m` under DBSCAN, the Asymmetric Loss model achieves **87.32% Event Recall (62 out of 71 cycles captured)**.
+
+#### Transition Pathway to Probabilistic State Modeling
+While 1D DBSCAN provides a robust non-parametric grouping on active samples, edge IoT gateways and utility backends benefit from migrating toward **probabilistic generative models**:
+* **Explicit-Duration Hidden Semi-Markov Models (HSMM):** Rather than modeling cycles via deterministic gap rules, an HSMM explicitly defines latent states (e.g. $S \in \{\text{Idle}, \text{Water Heating}, \text{Soak / Rest}, \text{Agitate / Spin}\}$). The 'Soak' state is modeled as an emission with mean $\mu \approx 0\text{ W}$ paired with a non-parametric duration distribution (e.g. Gamma or Poisson distribution over 5–15 minutes).
+* **Factorial HMMs (FHMM):** Disentangles multiple concurrent household appliances into independent parallel Markov chains, allowing the soaking phase of a washer to be tracked even while an oven or kettle operates in the background.
+
 

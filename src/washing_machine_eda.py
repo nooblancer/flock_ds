@@ -18,7 +18,15 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 sys.path.insert(0, ".")
 os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["MPLCONFIGDIR"] = os.path.expanduser("~/.matplotlib_tmp")
+
+from src.config import (
+    CLEAN_DIR, OUTPUT_DIR, PLOT_DIR, TABLE_DIR,
+    WASHING_MACHINE_CHANNEL, APPLIANCE_MAP
+)
+
+cache_dir = OUTPUT_DIR / ".matplotlib_cache"
+cache_dir.mkdir(parents=True, exist_ok=True)
+os.environ["MPLCONFIGDIR"] = str(cache_dir)
 
 import json
 import logging
@@ -29,19 +37,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from src.config import (
-    CLEAN_DIR, OUTPUT_DIR, PLOT_DIR, TABLE_DIR,
-    WASHING_MACHINE_CHANNEL, APPLIANCE_MAP
-)
-
 logger = logging.getLogger(__name__)
 
 # ────────────────────────────────────────────────────────────────────────────
-# Cycle Detection Parameters (Rule Definition)
+# Cycle Detection Parameters (Configurable Defaults)
 # ────────────────────────────────────────────────────────────────────────────
 ON_POWER_THRESHOLD_WATTS = 15.0       # Above standby power (~1-5W)
 MIN_CYCLE_DURATION_MINUTES = 15       # Minimum duration for valid wash cycle
-MAX_PAUSE_MINUTES = 5                 # Maximum bridgeable pause between phases (soaking/rest)
+MAX_PAUSE_MINUTES = 5                 # Bridgeable pause between cycle phases (soaking/rest)
 MIN_PEAK_POWER_WATTS = 500.0          # Must engage heating element or high-torque motor
 
 
@@ -51,32 +54,54 @@ def detect_washing_cycles(
     min_duration: int = MIN_CYCLE_DURATION_MINUTES,
     max_pause: int = MAX_PAUSE_MINUTES,
     min_peak: float = MIN_PEAK_POWER_WATTS,
+    method: str = "dynamic_bridge",
 ) -> list[dict]:
     """Detect discrete operating cycles from a 1-minute washing machine power series.
 
-    Plain-Language Rule:
-    -------------------
+    Configurable Physical & Density Stitching:
+    -----------------------------------------
     A washing machine cycle is defined as a continuous operational window where:
-      1. Power exceeds 15 W (active threshold separating operation from standby).
-      2. Intermittent pauses of up to 5 minutes (e.g. water filling, soaking, drum rest)
-         are merged into the active cycle.
-      3. The total duration must be at least 15 minutes.
-      4. The peak power reached during the cycle must exceed 500 W, confirming
-         the activation of water heating or spin extraction and rejecting
-         accidental sensor bumps or trivial standby fluctuations.
+      1. Power exceeds `on_thresh` (default 15 W, separating operational agitation from standby).
+      2. Intermittent pauses of up to `max_pause` minutes (e.g., drum soaking, water filling, 
+         unbalance correction) are bridged into the active cycle.
+      3. Total cycle duration must meet or exceed `min_duration` (default 15 minutes).
+      4. Peak power reached during the cycle must exceed `min_peak` (default 500 W),
+         confirming thermal water heating or high-torque spin extraction.
+
+    Transition Pathway from Heuristics to Probabilistic Grouping:
+    ------------------------------------------------------------
+    Hardcoded pause-bridges (e.g. strict 5-minute gap limits) suffer from fragility
+    across differing washing programs: eco-modes often incorporate prolonged drum-soak
+    phases (8-12 minutes) where power drops to 0 W. A rigid 5-minute rule falsely fragments
+    a single wash into two disjoined cycles, corrupting utility event counts.
+
+    Supported Algorithms:
+      - 'dynamic_bridge': Vectorized 1D difference bridging on active masks with user-defined
+        `max_pause` tolerance (O(N) runtime, highly optimized for telemetry streaming).
+      - 'dbscan': Density-based spatial clustering (1D DBSCAN) on active minute indices with
+        neighborhood radius `eps = max_pause + 1` and `min_samples = 1`. Clusters contiguous
+        density regions separated by low-density idle gaps.
+
+    Production Next Steps:
+      In edge production gateways, this deterministic grouping can be superseded by
+      Explicit-Duration Hidden Semi-Markov Models (HSMM) or Factorial HMMs (FHMM),
+      where the 'soak' state is an explicit latent state with a non-parametric duration
+      distribution, completely eliminating heuristic threshold tuning.
 
     Parameters
     ----------
     series_1min : pd.Series
         1-minute resampled power readings (Watts) with DatetimeIndex.
-    on_thresh : float
-        Power threshold to consider active.
-    min_duration : int
-        Minimum length in minutes.
-    max_pause : int
-        Maximum gap in minutes between active readings to bridge.
-    min_peak : float
-        Minimum peak power required across the cycle.
+    on_thresh : float, default 15.0
+        Power threshold in Watts to consider active.
+    min_duration : int, default 15
+        Minimum valid cycle length in minutes.
+    max_pause : int, default 5
+        Maximum gap in minutes between active readings to bridge into one cycle.
+    min_peak : float, default 500.0
+        Minimum peak power in Watts required across the cycle.
+    method : {"dynamic_bridge", "dbscan"}, default "dynamic_bridge"
+        Algorithm used to bridge temporal gaps between active phases.
 
     Returns
     -------
@@ -90,22 +115,39 @@ def detect_washing_cycles(
     values = clean_s.values
     index = clean_s.index
     is_on = (values >= on_thresh).astype(np.int32)
-
-    # Fast numpy gap-bridging for pauses <= max_pause
     on_indices = np.where(is_on == 1)[0]
     if len(on_indices) == 0:
         return []
 
-    bridged = is_on.copy()
-    gaps = np.diff(on_indices) - 1
-    for i, g in enumerate(gaps):
-        if 0 < g <= max_pause:
-            bridged[on_indices[i] + 1 : on_indices[i + 1]] = 1
+    if method == "dbscan":
+        from sklearn.cluster import DBSCAN
+        # 1D DBSCAN on discrete temporal minute indices
+        # eps is the maximum distance between points in the same cluster: (max_pause + 1)
+        clustering = DBSCAN(eps=float(max_pause + 1), min_samples=1).fit(on_indices.reshape(-1, 1))
+        labels = clustering.labels_
+        unique_labels = np.unique(labels)
+        starts = []
+        ends = []
+        for lab in unique_labels:
+            if lab == -1:
+                continue
+            c_indices = on_indices[labels == lab]
+            starts.append(c_indices[0])
+            ends.append(c_indices[-1] + 1)
+        starts = np.array(starts, dtype=int)
+        ends = np.array(ends, dtype=int)
+    else:
+        # Vectorized numpy gap-bridging for pauses <= max_pause
+        bridged = is_on.copy()
+        gaps = np.diff(on_indices) - 1
+        for i, g in enumerate(gaps):
+            if 0 < g <= max_pause:
+                bridged[on_indices[i] + 1 : on_indices[i + 1]] = 1
 
-    # Extract continuous segments via difference on padded array
-    diff = np.diff(np.pad(bridged, (1, 1), 'constant'))
-    starts = np.where(diff == 1)[0]
-    ends = np.where(diff == -1)[0]
+        # Extract continuous segments via difference on padded array
+        diff = np.diff(np.pad(bridged, (1, 1), 'constant'))
+        starts = np.where(diff == 1)[0]
+        ends = np.where(diff == -1)[0]
 
     cycles = []
     for s_idx, e_idx in zip(starts, ends):
@@ -115,7 +157,6 @@ def detect_washing_cycles(
             peak_p = float(np.max(cycle_power))
             if peak_p >= min_peak:
                 mean_p = float(np.mean(cycle_power))
-                # Energy in kWh: sum(Watts * (1/60 hr)) / 1000
                 energy_kwh = float(np.sum(cycle_power) / 60.0 / 1000.0)
                 start_dt = index[s_idx]
                 end_dt = index[e_idx - 1]
