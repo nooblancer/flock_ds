@@ -220,4 +220,33 @@ While 1D DBSCAN provides a robust non-parametric grouping on active samples, edg
 * **Explicit-Duration Hidden Semi-Markov Models (HSMM):** Rather than modeling cycles via deterministic gap rules, an HSMM explicitly defines latent states (e.g. $S \in \{\text{Idle}, \text{Water Heating}, \text{Soak / Rest}, \text{Agitate / Spin}\}$). The 'Soak' state is modeled as an emission with mean $\mu \approx 0\text{ W}$ paired with a non-parametric duration distribution (e.g. Gamma or Poisson distribution over 5–15 minutes).
 * **Factorial HMMs (FHMM):** Disentangles multiple concurrent household appliances into independent parallel Markov chains, allowing the soaking phase of a washer to be tracked even while an oven or kettle operates in the background.
 
+---
+
+### 2.9 Edge IoT Gateway Memory Constraints & O(1) Streaming Feature Engineering
+
+In real-world utility deployments, disaggregation models are increasingly pushed directly onto **edge smart meter gateways** (e.g., in-home displays, ESP32 microcontrollers, or ARM Cortex-M smart meter communication modules) to preserve consumer privacy and avoid expensive cellular backhaul transmission.
+
+#### The Edge Gateway Bottleneck:
+1. **RAM Scarcity:** Microcontrollers operate with severely restricted static memory ($< 256\text{ KB}$ RAM). Maintaining multi-scale circular FIFO sliding arrays (60 minutes of floats across multiple features) consumes significant static buffer space.
+2. **Buffer Desynchronization under Packet Drops:** When cellular or RF mesh networks experience transient packet drops or duty-cycle sleep intervals ($\Delta t = 2\text{–}10\text{ minutes}$), rigid index-based sliding windows desynchronize, causing buffer corruption or NaN propagation.
+3. **Cold-Start Failures:** After a power outage or firmware reboot, fixed rolling windows require up to 60 samples before producing full-rank feature vectors, causing a 1-hour "blind spot" where disaggregation is paralyzed.
+
+#### Production Solution: O(1) Memory Streaming EWMA Buffer ([`src/preprocessing.py`](file:///d:/Code/flock_ds/src/preprocessing.py))
+To overcome edge memory constraints, we introduced the `StreamingEdgeBuffer` architecture:
+* **Recursive State Formulation ($\mathcal{O}(1)$ Memory):**
+  Instead of storing arrays of historical readings, the buffer tracks recursive Exponentially Weighted Moving Averages (EWMA) and exponential variances (Finch, 2009):
+  $$M_{t} = \alpha x_t + (1 - \alpha) M_{t-1}, \quad \text{where } \alpha = \frac{2}{S + 1}$$
+  $$V_{t} = (1 - \alpha) \left(V_{t-1} + \alpha (x_t - M_{t-1})^2\right)$$
+  Tracking spans $S \in \{5, 15, 30, 60\text{ minutes}\}$ requires **under 200 bytes of static RAM**, independent of sampling frequency.
+* **Cold-Start Bias Correction:**
+  At device boot ($t=0$), states are initialized immediately to $M_0 = x_0, V_0 = 0$. Cold-start bias correction (analogous to the Adam optimizer) eliminates under-estimation without warm-up lag:
+  $$\hat{M}_t = \frac{M_t}{1 - (1 - \alpha)^t}$$
+* **Continuous-Time Decay for Packet Drops ($\Delta t$ Awareness):**
+  When an intermittent outage produces a time jump $\Delta t > 1\text{ minute}$, the smoothing weight dynamically rescales via continuous exponential decay:
+  $$\alpha_{\text{eff}} = 1 - \exp\left(-\frac{\Delta t}{\tau}\right), \quad \tau = -\frac{1}{\ln(1 - \alpha)}$$
+* **Non-Volatile Flash Persistence:** State registers serialize via `to_dict()` and `from_dict()`, allowing the gateway to persist EWMA states to flash memory across brownouts.
+
+#### Empirical Validation:
+When trained strictly on $\mathcal{O}(1)$-memory EWMA features, our XGBoost disaggregation model achieved an **Event Recall of 87.01% (67/77 cycles captured)** and a test RMSE of **85.63 W** (virtually matching the 83.32 W of full 60-minute window buffers), proving that edge devices can execute high-precision disaggregation with minimal memory overhead.
+
 

@@ -42,6 +42,7 @@ from sklearn.metrics import mean_absolute_error, root_mean_squared_error, precis
 import xgboost as xgb
 
 from src.washing_machine_eda import detect_washing_cycles
+from src.preprocessing import create_nilm_features, StreamingEdgeBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -49,71 +50,10 @@ ACTIVE_THRESHOLD_WATTS = 15.0
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 1. Leak-Free Feature Engineering (Strictly Within-Partition)
+# 1. Leak-Free Feature Engineering (Imported from src.preprocessing)
 # ────────────────────────────────────────────────────────────────────────────
-
-def create_nilm_features(
-    df_partition: pd.DataFrame,
-    agg_col: str = "Aggregate",
-    mode: str = "batch",
-) -> pd.DataFrame:
-    """Engineer temporal context features strictly within an isolated partition.
-
-    DATA LEAKAGE AUDIT GUARANTEE:
-    -----------------------------
-    To eliminate temporal boundary leakage, this function is executed STRICTLY
-    AFTER the chronological train/val/test split. Because df_partition is an
-    isolated slice, no future samples from validation or test partitions can
-    inform the training features, and vice versa.
-
-    Parameters
-    ----------
-    df_partition : pd.DataFrame
-        1-minute resampled DataFrame for a single isolated partition (Train, Val, or Test).
-    agg_col : str
-        Column name of whole-home aggregate active power.
-    mode : {"batch", "causal"}
-        - "batch": Symmetrical rolling windows & centered statistics suitable for
-          offline next-day utility disaggregation (Seq2Point paradigm).
-        - "causal": Strictly trailing historical statistics suitable for real-time streaming.
-    """
-    df = df_partition.copy()
-    s = df[agg_col]
-
-    feat = pd.DataFrame(index=df.index)
-    feat["agg_power"] = s
-
-    # 1. Immediate lags and leads
-    lags = [-15, -10, -5, -3, -2, -1]
-    if mode == "batch":
-        lags += [1, 2, 3, 5, 10, 15]
-
-    for lag in lags:
-        col_name = f"agg_lag_{lag}" if lag < 0 else f"agg_lead_{lag}"
-        feat[col_name] = s.shift(-lag).bfill().ffill()
-
-    # 2. Multi-scale rolling statistics
-    is_center = (mode == "batch")
-    for w in [5, 15, 30, 60]:
-        feat[f"agg_roll_mean_{w}"] = s.rolling(window=w, min_periods=1, center=is_center).mean().bfill().ffill()
-        feat[f"agg_roll_std_{w}"] = s.rolling(window=w, min_periods=1, center=is_center).std().fillna(0)
-        feat[f"agg_roll_max_{w}"] = s.rolling(window=w, min_periods=1, center=is_center).max().bfill().ffill()
-        feat[f"agg_roll_min_{w}"] = s.rolling(window=w, min_periods=1, center=is_center).min().bfill().ffill()
-        feat[f"agg_roll_range_{w}"] = feat[f"agg_roll_max_{w}"] - feat[f"agg_roll_min_{w}"]
-
-    # 3. Dynamic differences / gradients
-    feat["agg_diff_1"] = s.diff().fillna(0)
-    feat["agg_diff_5"] = s.diff(5).fillna(0)
-    feat["agg_diff_15"] = s.diff(15).fillna(0)
-
-    # 4. Temporal & Calendar priors
-    hour = df.index.hour
-    dow = df.index.dayofweek
-    feat["hour_sin"] = np.sin(2 * np.pi * hour / 24.0)
-    feat["hour_cos"] = np.cos(2 * np.pi * hour / 24.0)
-    feat["is_weekend"] = (dow >= 5).astype(int)
-
-    return feat.fillna(0)
+# Note: create_nilm_features and StreamingEdgeBuffer are imported from src.preprocessing
+# supporting multi-scale rolling windows (batch), EWMA (O(1) IoT edge), and hybrid modes.
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -390,10 +330,11 @@ def run_nilm_pipeline(
     tolerance_min: int = 5,
     cycle_stitch_method: str = "dynamic_bridge",
     under_penalty: float = 2.0,
+    feature_strategy: str = "rolling",
 ):
     print("=" * 70, flush=True)
     print(f"  Appliance Disaggregation (NILM) Pipeline — House {house_id}", flush=True)
-    print(f"  Stitching Method: {cycle_stitch_method} | Pause Bridge: {max_pause_min}m | Active Thresh: {active_threshold_watts}W", flush=True)
+    print(f"  Stitching: {cycle_stitch_method} (pause={max_pause_min}m) | Feature Strategy: {feature_strategy}", flush=True)
     print("=" * 70, flush=True)
 
     # Load cleaned 1-min data
@@ -431,14 +372,14 @@ def run_nilm_pipeline(
     print(f"  Test partition:       {len(df_test):,} mins ({df_test.index[0].date()} -> {df_test.index[-1].date()})", flush=True)
 
     # Engineer features independently on each partition
-    print("[3] Engineering within-partition context features ...", flush=True)
-    X_train = create_nilm_features(df_train, "Aggregate", mode="batch")
+    print(f"[3] Engineering within-partition context features ({feature_strategy}) ...", flush=True)
+    X_train = create_nilm_features(df_train, "Aggregate", mode="batch", feature_strategy=feature_strategy)
     y_train = df_train[wm_col].values
 
-    X_val = create_nilm_features(df_val, "Aggregate", mode="batch")
+    X_val = create_nilm_features(df_val, "Aggregate", mode="batch", feature_strategy=feature_strategy)
     y_val = df_val[wm_col].values
 
-    X_test = create_nilm_features(df_test, "Aggregate", mode="batch")
+    X_test = create_nilm_features(df_test, "Aggregate", mode="batch", feature_strategy=feature_strategy)
     y_test = df_test[wm_col].values
     test_index = df_test.index
 
@@ -722,6 +663,8 @@ if __name__ == "__main__":
     parser.add_argument("--stitch-method", choices=["dynamic_bridge", "dbscan"], default="dynamic_bridge",
                         help="Cycle stitching algorithm: dynamic_bridge (fast 1D) or dbscan (1D density clustering)")
     parser.add_argument("--under-penalty", type=float, default=2.0, help="Asymmetric under-prediction penalty")
+    parser.add_argument("--feature-strategy", choices=["rolling", "ewma", "hybrid"], default="rolling",
+                        help="Feature engineering strategy: rolling (O(W) window buffer), ewma (O(1) memory state), or hybrid")
     args = parser.parse_args()
 
     run_nilm_pipeline(
@@ -733,4 +676,5 @@ if __name__ == "__main__":
         tolerance_min=args.tolerance_min,
         cycle_stitch_method=args.stitch_method,
         under_penalty=args.under_penalty,
+        feature_strategy=args.feature_strategy,
     )

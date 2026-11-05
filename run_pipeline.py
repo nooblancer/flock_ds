@@ -64,10 +64,11 @@ def run_stage_4(
     stitch_method: str = "dynamic_bridge",
     active_thresh: float = 15.0,
     tolerance_min: int = 5,
+    feature_strategy: str = "rolling",
 ):
     print("\n" + "=" * 70)
     print("  RUNNING STAGE 4: NILM Disaggregation Modeling & Baseline Benchmark")
-    print(f"  Configuration: method={stitch_method}, max_pause={max_pause}m, active_thresh={active_thresh}W, tolerance={tolerance_min}m")
+    print(f"  Config: method={stitch_method}, pause={max_pause}m, thresh={active_thresh}W, tolerance={tolerance_min}m, features={feature_strategy}")
     print("=" * 70)
     from src.nilm_model import run_nilm_pipeline
     run_nilm_pipeline(
@@ -76,6 +77,7 @@ def run_stage_4(
         max_pause_min=max_pause,
         tolerance_min=tolerance_min,
         cycle_stitch_method=stitch_method,
+        feature_strategy=feature_strategy,
     )
 
 def main():
@@ -87,6 +89,8 @@ def main():
                         help="Cycle stitching method: dynamic_bridge or dbscan")
     parser.add_argument("--active-thresh", type=float, default=15.0, help="Active power threshold (W)")
     parser.add_argument("--tolerance-min", type=int, default=5, help="Event matching tolerance window (minutes)")
+    parser.add_argument("--feature-strategy", choices=["rolling", "ewma", "hybrid"], default="rolling",
+                        help="Feature extraction strategy: rolling (O(W) window buffer), ewma (O(1) memory state), or hybrid")
     args = parser.parse_args()
 
     start_time = time.time()
@@ -103,6 +107,7 @@ def main():
             stitch_method=args.stitch_method,
             active_thresh=args.active_thresh,
             tolerance_min=args.tolerance_min,
+            feature_strategy=args.feature_strategy,
         )
     elif args.stage == 1:
         run_stage_1()
@@ -116,6 +121,7 @@ def main():
             stitch_method=args.stitch_method,
             active_thresh=args.active_thresh,
             tolerance_min=args.tolerance_min,
+            feature_strategy=args.feature_strategy,
         )
 
     elapsed = time.time() - start_time

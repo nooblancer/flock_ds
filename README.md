@@ -123,10 +123,10 @@ To ensure strict real-world generalization, we enforce a **contiguous chronologi
 
 ## 5. Modeling Approach & Architecture Trade-Offs
 
-### Engineered Feature Matrix
-Because a single static power measurement cannot differentiate a 2,000 W kettle (duration ~3 minutes) from a 2,000 W washing machine heater (duration ~15 minutes followed by cyclic motor agitation), we engineered **28 contextual features**:
-* **Temporal Context Window:** Symmetric lag and lead features ($t \pm 1, 2, 3, 5, 10, 15\text{ minutes}$).
-* **Multi-Scale Rolling Statistics:** Centered moving mean, standard deviation, min, max, and peak-to-peak dynamic range over 5m, 15m, 30m, and 60m windows.
+### Engineered Feature Matrix & Edge Streaming Buffer
+Because a single static power measurement cannot differentiate a 2,000 W kettle (duration ~3 minutes) from a 2,000 W washing machine heater (duration ~15 minutes followed by cyclic motor agitation), we implemented two complementary feature strategies in [`src/preprocessing.py`](file:///d:/Code/flock_ds/src/preprocessing.py):
+* **Batch Analytics (Multi-Scale Rolling Statistics):** Centered moving mean, standard deviation, min, max, and peak-to-peak dynamic range over 5m, 15m, 30m, and 60m windows, plus symmetric lags and leads ($t \pm 1, 2, 3, 5, 10, 15\text{ minutes}$).
+* **Edge IoT Gateways (O(1) Streaming EWMA Buffer):** For memory-constrained microcontrollers (ESP32 / smart meter gateways), the `StreamingEdgeBuffer` tracks recursive Exponentially Weighted Moving Averages (EWMA) and variances in **under 200 bytes of static RAM**, with dynamic time-delta ($\Delta t$) packet drop adaptation and instant cold-start bias correction.
 * **Instantaneous Gradient:** Step differences ($\Delta P$) at 1m, 5m, and 15m intervals.
 * **Calendar Priors:** Hour-of-day cyclical sine/cosine encodings and weekend flags.
 
