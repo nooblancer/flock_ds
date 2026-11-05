@@ -1,0 +1,29 @@
+# Exclude local data directories (mounted via volume instead)
+data/
+*.7z
+outputs/house1_cleaned_1min.csv
+outputs/.matplotlib_cache/
+
+# Git and IDE
+.git
+.gitignore
+.vscode
+.idea
+
+# Python bytecode and temporary caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache
+.ipynb_checkpoints
+
+# Virtual environments
+.env
+.venv
+venv/
+ENV/
+
+# Scratch & context
+context/
+scratch/

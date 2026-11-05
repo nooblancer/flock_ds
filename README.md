@@ -7,6 +7,33 @@
 
 ---
 
+## ⚡ How to Run (Docker) — 100% Reproducible Execution
+
+For engineering review board members and evaluators seeking immediate, zero-setup verification, the entire pipeline is fully containerized:
+
+### Option A: Docker Compose (Recommended)
+```bash
+# Build the production image and execute the entire pipeline end-to-end
+docker compose up --build
+```
+*All generated diagnostic tables (`outputs/tables/`) and publication-quality figures (`outputs/plots/`) automatically persist to your host machine via volume mounts.*
+
+### Option B: Docker CLI
+```bash
+# 1. Build the production image
+docker build -t flock-energy-nilm .
+
+# 2. Execute end-to-end with local data and output volume mounts
+docker run --rm -v "$(pwd)/data:/app/data" -v "$(pwd)/outputs:/app/outputs" flock-energy-nilm
+```
+
+> **Targeted Pipeline Execution:** To run individual stages or Leave-One-House-Out (LOHO) cross-household evaluation inside the container:
+> ```bash
+> docker compose run --rm nilm-pipeline --stage 4 --loho
+> ```
+
+---
+
 ## 1. Project Overview & Architecture
 
 This repository delivers an end-to-end, production-grade Non-Intrusive Load Monitoring (NILM) and smart-meter analytics pipeline. Built for electricity distribution companies (DISCOMs) and demand-side management teams, this project addresses two core challenges:
@@ -15,6 +42,9 @@ This repository delivers an end-to-end, production-grade Non-Intrusive Load Moni
 
 ```
 flock_ds/
+├── Dockerfile                          # Production Debian-slim container definition
+├── docker-compose.yml                  # Container volume orchestration for data & outputs
+├── .dockerignore                       # Build-context optimization exclusions
 ├── data/                               # Dataset repository (raw & cleaned REFIT)
 │   ├── REFIT_RAW_081116/               # Raw ~8s polled data (Part1 + Part2 per house)
 │   ├── CLEAN_REFIT_081116/             # Official cleaned data (20 houses)
@@ -62,10 +92,10 @@ flock_ds/
 
 ## 2. Quickstart & Setup Instructions
 
-### Environment Setup
+### Environment Setup (Bare-Metal Python)
 Clone the repository and install dependencies in Python 3.10+:
 ```bash
-git clone https://github.com/kushagra-bhatore/flock_ds.git
+git clone https://github.com/nooblancer/flock_ds.git
 cd flock_ds
 pip install -r requirements.txt
 ```

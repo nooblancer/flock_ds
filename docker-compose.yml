@@ -1,0 +1,28 @@
+version: "3.8"
+
+# ==============================================================================
+# Docker Compose Configuration for Flock Energy NILM Disaggregation Pipeline
+# Mounts host data directory and persists outputs/figures to the host filesystem.
+# ==============================================================================
+
+services:
+  nilm-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: flock-energy-nilm:latest
+    container_name: flock_nilm_runner
+    working_dir: /app
+    volumes:
+      # Mount local REFIT dataset directory (mounted read-only to prevent accidental data corruption)
+      # Can be overridden via DATA_PATH environment variable (e.g., DATA_PATH=/mnt/datasets/refit)
+      - ${DATA_PATH:-./data}:/app/data:ro
+
+      # Mount local outputs directory to persist generated PNG plots, CSV tables, and JSON logs
+      - ./outputs:/app/outputs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+      - MPLCONFIGDIR=/app/outputs/.matplotlib_cache
+    # Default execution: run the entire master pipeline end-to-end
+    command: ["--all"]
