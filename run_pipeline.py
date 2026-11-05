@@ -65,25 +65,44 @@ def run_stage_4(
     active_thresh: float = 15.0,
     tolerance_min: int = 5,
     feature_strategy: str = "rolling",
+    loho: bool = False,
+    train_houses: list[int] = [1, 2, 5, 7],
+    test_house: int = 20,
 ):
     print("\n" + "=" * 70)
-    print("  RUNNING STAGE 4: NILM Disaggregation Modeling & Baseline Benchmark")
+    print("  RUNNING STAGE 4: NILM Disaggregation Modeling & Benchmark")
+    print(f"  Mode: {'Leave-One-House-Out (LOHO)' if loho else 'Single Household (House 1)'}")
     print(f"  Config: method={stitch_method}, pause={max_pause}m, thresh={active_thresh}W, tolerance={tolerance_min}m, features={feature_strategy}")
     print("=" * 70)
-    from src.nilm_model import run_nilm_pipeline
-    run_nilm_pipeline(
-        house_id=1,
-        active_threshold_watts=active_thresh,
-        max_pause_min=max_pause,
-        tolerance_min=tolerance_min,
-        cycle_stitch_method=stitch_method,
-        feature_strategy=feature_strategy,
-    )
+    if loho:
+        from src.nilm_model import run_loho_experiment
+        run_loho_experiment(
+            train_houses=train_houses,
+            test_house=test_house,
+            active_threshold_watts=active_thresh,
+            max_pause_min=max_pause,
+            tolerance_min=tolerance_min,
+            cycle_stitch_method=stitch_method,
+            feature_strategy=feature_strategy,
+        )
+    else:
+        from src.nilm_model import run_nilm_pipeline
+        run_nilm_pipeline(
+            house_id=1,
+            active_threshold_watts=active_thresh,
+            max_pause_min=max_pause,
+            tolerance_min=tolerance_min,
+            cycle_stitch_method=stitch_method,
+            feature_strategy=feature_strategy,
+        )
 
 def main():
     parser = argparse.ArgumentParser(description="Flock Energy NILM End-to-End Pipeline")
     parser.add_argument("--all", action="store_true", help="Run entire end-to-end pipeline")
     parser.add_argument("--stage", type=int, choices=[1, 2, 3, 4], help="Run a specific stage (1-4)")
+    parser.add_argument("--loho", action="store_true", help="Run Leave-One-House-Out cross-validation in Stage 4")
+    parser.add_argument("--train-houses", nargs="+", type=int, default=[1, 2, 5, 7], help="Training house IDs for LOHO")
+    parser.add_argument("--test-house", type=int, default=20, help="Target unseen test house ID for LOHO")
     parser.add_argument("--max-pause", type=int, default=5, help="Bridgeable pause duration in minutes (e.g. 5, 8, 10)")
     parser.add_argument("--stitch-method", choices=["dynamic_bridge", "dbscan"], default="dynamic_bridge",
                         help="Cycle stitching method: dynamic_bridge or dbscan")
@@ -95,6 +114,17 @@ def main():
 
     start_time = time.time()
     
+    stage_4_kwargs = dict(
+        max_pause=args.max_pause,
+        stitch_method=args.stitch_method,
+        active_thresh=args.active_thresh,
+        tolerance_min=args.tolerance_min,
+        feature_strategy=args.feature_strategy,
+        loho=args.loho,
+        train_houses=args.train_houses,
+        test_house=args.test_house,
+    )
+
     if args.all or args.stage is None:
         print("\n" + "#" * 70)
         print("  EXECUTING COMPLETE END-TO-END FLOCK ENERGY DATA SCIENCE PIPELINE")
@@ -102,13 +132,7 @@ def main():
         run_stage_1()
         run_stage_2()
         run_stage_3()
-        run_stage_4(
-            max_pause=args.max_pause,
-            stitch_method=args.stitch_method,
-            active_thresh=args.active_thresh,
-            tolerance_min=args.tolerance_min,
-            feature_strategy=args.feature_strategy,
-        )
+        run_stage_4(**stage_4_kwargs)
     elif args.stage == 1:
         run_stage_1()
     elif args.stage == 2:
@@ -116,13 +140,7 @@ def main():
     elif args.stage == 3:
         run_stage_3()
     elif args.stage == 4:
-        run_stage_4(
-            max_pause=args.max_pause,
-            stitch_method=args.stitch_method,
-            active_thresh=args.active_thresh,
-            tolerance_min=args.tolerance_min,
-            feature_strategy=args.feature_strategy,
-        )
+        run_stage_4(**stage_4_kwargs)
 
     elapsed = time.time() - start_time
     print("\n" + "#" * 70)

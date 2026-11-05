@@ -318,7 +318,42 @@ def evaluate_predictions(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 5. Main Model Pipeline
+# 5. Modular Data Ingestion (Strict Per-Household Telemetry Loading)
+# ────────────────────────────────────────────────────────────────────────────
+
+def load_house_clean(house_id: int) -> tuple[pd.DataFrame, str]:
+    """Load and resample 1-minute cleaned data for a specific REFIT household.
+
+    Parameters
+    ----------
+    house_id : int
+        REFIT household identifier (e.g., 1, 2, 5, 7, 20).
+
+    Returns
+    -------
+    tuple[pd.DataFrame, str]
+        (Cleaned 1-minute DataFrame indexed by timestamp, Washing machine column name)
+    """
+    fpath = CLEAN_DIR / f"CLEAN_House{house_id}.csv"
+    if not fpath.exists():
+        raise FileNotFoundError(f"Cleaned dataset for House {house_id} not found at {fpath}")
+
+    wm_col = WASHING_MACHINE_CHANNEL.get(house_id)
+    if wm_col is None:
+        raise KeyError(f"No washing machine channel configured for House {house_id} in WASHING_MACHINE_CHANNEL")
+
+    df_raw = pd.read_csv(fpath, usecols=["Time", "Aggregate", wm_col])
+    df_raw["Time"] = pd.to_datetime(df_raw["Time"], format="%Y-%m-%d %H:%M:%S")
+    df_raw = df_raw.set_index("Time").sort_index()
+
+    df_1min = df_raw.resample("1min").mean()
+    valid_mask = df_1min["Aggregate"].notna() & df_1min[wm_col].notna()
+    df_clean = df_1min[valid_mask].copy()
+    return df_clean, wm_col
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6. Single-Household Chronological Disaggregation Pipeline
 # ────────────────────────────────────────────────────────────────────────────
 
 def run_nilm_pipeline(
@@ -339,18 +374,7 @@ def run_nilm_pipeline(
 
     # Load cleaned 1-min data
     print("[1] Loading 1-minute cleaned data ...", flush=True)
-    fpath = CLEAN_DIR / f"CLEAN_House{house_id}.csv"
-    wm_col = WASHING_MACHINE_CHANNEL[house_id]
-    df_raw = pd.read_csv(fpath, usecols=["Time", "Aggregate", wm_col])
-    df_raw["Time"] = pd.to_datetime(df_raw["Time"], format="%Y-%m-%d %H:%M:%S")
-    df_raw = df_raw.set_index("Time").sort_index()
-
-    # Resample to 1-minute
-    df_1min = df_raw.resample("1min").mean()
-
-    # Filter out outage periods (where data was missing/unmonitored)
-    valid_mask = df_1min["Aggregate"].notna() & df_1min[wm_col].notna()
-    df_clean = df_1min[valid_mask].copy()
+    df_clean, wm_col = load_house_clean(house_id)
     print(f"  Valid 1-minute observations: {len(df_clean):,} minutes "
           f"({df_clean.index.min().date()} to {df_clean.index.max().date()})", flush=True)
 
@@ -494,14 +518,20 @@ def run_nilm_pipeline(
     # Save comprehensive metrics table
     metrics_df = pd.DataFrame(metrics_list)
     out_table = TABLE_DIR / "nilm_model_metrics.csv"
-    metrics_df.to_csv(out_table, index=False)
+    if out_table.exists():
+        existing_df = pd.read_csv(out_table)
+        existing_df = existing_df[~existing_df["model"].isin(metrics_df["model"])]
+        full_df = pd.concat([existing_df, metrics_df], ignore_index=True)
+    else:
+        full_df = metrics_df
+    full_df.to_csv(out_table, index=False)
     print(f"\n[*] Metrics table saved to {out_table}", flush=True)
     print("\n" + "=" * 115, flush=True)
     print("  COMPREHENSIVE MODEL EVALUATION BENCHMARK (DUAL-TIER METRICS & RESIDUAL CANCELLATION DIAGNOSTICS)", flush=True)
     print("=" * 115, flush=True)
     cols_display = ["model", "mae_watts", "rmse_watts", "rete_energy_pct", "idle_bleed_kwh", "peak_deficit_kwh",
                     "sample_f1", "event_precision", "event_recall", "event_f1", "matched_tp_events"]
-    print(metrics_df[cols_display].to_string(index=False), flush=True)
+    print(full_df[cols_display].to_string(index=False), flush=True)
 
     # ────────────────────────────────────────────────────────────────────────
     # Plot 1: Actual vs. Predicted on Evaluation Data (Zoomed 48h Window)
@@ -652,10 +682,289 @@ def run_nilm_pipeline(
     print("=" * 70, flush=True)
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# 7. Leave-One-House-Out (LOHO) Cross-Validation Benchmark
+# ────────────────────────────────────────────────────────────────────────────
+
+def run_loho_experiment(
+    train_houses: list[int] = [1, 2, 5, 7],
+    test_house: int = 20,
+    active_threshold_watts: float = ACTIVE_THRESHOLD_WATTS,
+    max_pause_min: int = 5,
+    min_duration_min: int = 15,
+    min_peak_watts: float = 500.0,
+    tolerance_min: int = 5,
+    cycle_stitch_method: str = "dynamic_bridge",
+    under_penalty: float = 2.0,
+    feature_strategy: str = "rolling",
+) -> pd.DataFrame:
+    """Leave-One-House-Out (LOHO) Cross-Validation Benchmark.
+
+    Rigorous Zero-Leakage Cross-Household Architecture:
+    --------------------------------------------------
+    1. Independent Per-Household Ingestion & Feature Engineering:
+       Iterates through each training household in `train_houses`.
+       Extracts temporal lags, rolling windows, and EWMA statistics strictly
+       on that household's isolated 1-minute timeline.
+       Guarantees ZERO cross-house boundary bleeding: House 1's trailing samples
+       never bleed into House 2's starting lag features or moving averages.
+    2. Isolated Internal Validation Split:
+       Constructs validation partitions exclusively from the chronological holdout
+       (final 15%) of each training house.
+    3. Pure Out-of-Sample Evaluation:
+       The target test household (`test_house`, e.g. House 20) remains 100% unseen
+       during feature scaling, objective tuning, and tree growth.
+    4. Dual-Tier Logging:
+       Records MAE, RMSE, RETE, Idle Bleed, Peak Deficit, Sample F1, and Event F1,
+       appending the results directly to `outputs/tables/nilm_model_metrics.csv`.
+
+    Parameters
+    ----------
+    train_houses : list[int], default [1, 2, 5, 7]
+        List of household IDs used for model training.
+    test_house : int, default 20
+        Target unseen household ID for zero-shot evaluation.
+    active_threshold_watts : float, default 15.0
+        Standby-to-active power threshold (W).
+    max_pause_min : int, default 5
+        Maximum bridgeable pause duration (minutes).
+    min_duration_min : int, default 15
+        Minimum valid cycle duration (minutes).
+    min_peak_watts : float, default 500.0
+        Minimum heating peak required for cycle validation (W).
+    tolerance_min : int, default 5
+        Event matching tolerance window (minutes).
+    cycle_stitch_method : {"dynamic_bridge", "dbscan"}
+        Cycle grouping algorithm.
+    under_penalty : float, default 2.0
+        Asymmetric loss multiplier for peak under-predictions.
+    feature_strategy : {"rolling", "ewma", "hybrid"}
+        Feature engineering method.
+
+    Returns
+    -------
+    pd.DataFrame
+        Table of evaluated LOHO model performance metrics.
+    """
+    print("=" * 80, flush=True)
+    print(f"  LEAVE-ONE-HOUSE-OUT (LOHO) CROSS-HOUSEHOLD BENCHMARK", flush=True)
+    print(f"  Training Houses: {train_houses} -> Target Unseen Test House: {test_house}", flush=True)
+    print(f"  Stitching: {cycle_stitch_method} (pause={max_pause_min}m) | Feature Strategy: {feature_strategy}", flush=True)
+    print("=" * 80, flush=True)
+
+    # 1. Multi-House Ingestion & Isolated Feature Extraction
+    print(f"\n[1] Ingesting {len(train_houses)} Training Households (Zero Cross-House Leakage Guarantee) ...", flush=True)
+    X_train_list, y_train_list = [], []
+    X_val_list, y_val_list = [], []
+
+    for h in train_houses:
+        df_h, wm_col = load_house_clean(h)
+        n_h = len(df_h)
+        # Chronological holdout strictly within this household for early stopping
+        train_end = int(n_h * 0.85)
+        df_h_tr = df_h.iloc[:train_end].copy()
+        df_h_v = df_h.iloc[train_end:].copy()
+
+        # Extract features independently per household to ensure sliding windows and lags NEVER bridge houses!
+        X_h_tr = create_nilm_features(df_h_tr, "Aggregate", mode="batch", feature_strategy=feature_strategy)
+        y_h_tr = df_h_tr[wm_col].values
+
+        X_h_v = create_nilm_features(df_h_v, "Aggregate", mode="batch", feature_strategy=feature_strategy)
+        y_h_v = df_h_v[wm_col].values
+
+        X_train_list.append(X_h_tr)
+        y_train_list.append(y_h_tr)
+        X_val_list.append(X_h_v)
+        y_val_list.append(y_h_v)
+        print(f"  House {h}: {len(df_h_tr):,} train samples, {len(df_h_v):,} val samples ({df_h.index[0].date()} to {df_h.index[-1].date()})", flush=True)
+
+    # Concatenate isolated matrices
+    X_train = pd.concat(X_train_list, ignore_index=True)
+    y_train = np.concatenate(y_train_list)
+    X_val = pd.concat(X_val_list, ignore_index=True)
+    y_val = np.concatenate(y_val_list)
+
+    print(f"\n[2] Aggregated Multi-House Training Matrix: {X_train.shape[0]:,} rows x {X_train.shape[1]} features", flush=True)
+    print(f"    Multi-House Validation Matrix:      {X_val.shape[0]:,} rows x {X_val.shape[1]} features", flush=True)
+
+    # 2. Ingest Unseen Target Household
+    print(f"\n[3] Ingesting Target Unseen Household (House {test_house}) ...", flush=True)
+    df_test, wm_test = load_house_clean(test_house)
+    X_test = create_nilm_features(df_test, "Aggregate", mode="batch", feature_strategy=feature_strategy)
+    y_test = df_test[wm_test].values
+    test_index = df_test.index
+
+    print(f"  Test House {test_house}: {len(df_test):,} minutes ({test_index.min().date()} to {test_index.max().date()})", flush=True)
+
+    true_test_s = pd.Series(y_test, index=test_index)
+    true_cycles = detect_washing_cycles(
+        true_test_s,
+        on_thresh=active_threshold_watts,
+        min_duration=min_duration_min,
+        max_pause=max_pause_min,
+        min_peak=min_peak_watts,
+        method=cycle_stitch_method,
+    )
+    print(f"  Ground-truth washing cycles in unseen House {test_house}: {len(true_cycles)} cycles", flush=True)
+
+    eval_kwargs = dict(
+        active_threshold_watts=active_threshold_watts,
+        max_pause_min=max_pause_min,
+        min_duration_min=min_duration_min,
+        min_peak_watts=min_peak_watts,
+        tolerance_min=tolerance_min,
+        cycle_stitch_method=cycle_stitch_method,
+    )
+
+    metrics_list = []
+
+    # Baseline 1: Always-Off (0W) on Test House
+    print(f"\n[4] Evaluating Always-Off Baseline on House {test_house} ...", flush=True)
+    y_pred_base1 = np.zeros_like(y_test)
+    m1 = evaluate_predictions(y_test, y_pred_base1, test_index, f"LOHO Baseline: Always-Off (0W) [House {test_house}]", true_cycles, **eval_kwargs)
+    metrics_list.append(m1)
+
+    # Model 1: LOHO XGBoost (Symmetric MSE)
+    print(f"\n[5] Training LOHO XGBoost Regressor (Symmetric MSE) ...", flush=True)
+    model_sym = xgb.XGBRegressor(
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=6,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        random_state=42,
+        n_jobs=-1,
+        tree_method="hist",
+    )
+    model_sym.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
+
+    y_pred_sym_raw = np.clip(model_sym.predict(X_test), 0, None)
+    y_pred_sym_thresh = y_pred_sym_raw.copy()
+    y_pred_sym_thresh[y_pred_sym_thresh < 10.0] = 0.0
+
+    m2 = evaluate_predictions(y_test, y_pred_sym_raw, test_index, f"LOHO XGBoost (Symmetric MSE - Raw) [Test: H{test_house}]", true_cycles, **eval_kwargs)
+    m3 = evaluate_predictions(y_test, y_pred_sym_thresh, test_index, f"LOHO XGBoost (Symmetric MSE - Thresholded) [Test: H{test_house}]", true_cycles, **eval_kwargs)
+    metrics_list.extend([m2, m3])
+
+    # Model 2: LOHO XGBoost (Asymmetric Peak-Weighted Loss)
+    print(f"\n[6] Training LOHO XGBoost Regressor (Asymmetric Peak-Weighted Loss) ...", flush=True)
+    asym_obj = asymmetric_mse_objective(under_penalty=under_penalty, active_threshold=min_peak_watts)
+    model_asym = xgb.XGBRegressor(
+        objective=asym_obj,
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=6,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        random_state=42,
+        n_jobs=-1,
+        tree_method="hist",
+        eval_metric="rmse",
+    )
+    model_asym.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
+
+    y_pred_asym_raw = np.clip(model_asym.predict(X_test), 0, None)
+    y_pred_asym_thresh = y_pred_asym_raw.copy()
+    y_pred_asym_thresh[y_pred_asym_thresh < 10.0] = 0.0
+
+    m4 = evaluate_predictions(y_test, y_pred_asym_raw, test_index, f"LOHO XGBoost (Asymmetric Loss - Raw) [Test: H{test_house}]", true_cycles, **eval_kwargs)
+    m5 = evaluate_predictions(y_test, y_pred_asym_thresh, test_index, f"LOHO XGBoost (Asymmetric Loss - Thresholded) [Test: H{test_house}]", true_cycles, **eval_kwargs)
+    metrics_list.extend([m4, m5])
+
+    # Save to metrics table
+    loho_df = pd.DataFrame(metrics_list)
+    out_table = TABLE_DIR / "nilm_model_metrics.csv"
+    if out_table.exists():
+        existing_df = pd.read_csv(out_table)
+        existing_df = existing_df[~existing_df["model"].isin(loho_df["model"])]
+        combined_df = pd.concat([existing_df, loho_df], ignore_index=True)
+    else:
+        combined_df = loho_df
+    combined_df.to_csv(out_table, index=False)
+    print(f"\n[*] Updated metrics table saved to {out_table}", flush=True)
+
+    print("\n" + "=" * 115, flush=True)
+    print(f"  LEAVE-ONE-HOUSE-OUT (LOHO) CROSS-HOUSEHOLD BENCHMARK RESULTS (TEST: HOUSE {test_house})", flush=True)
+    print("=" * 115, flush=True)
+    cols_display = ["model", "mae_watts", "rmse_watts", "rete_energy_pct", "idle_bleed_kwh", "peak_deficit_kwh",
+                    "sample_f1", "event_precision", "event_recall", "event_f1", "matched_tp_events"]
+    print(loho_df[cols_display].to_string(index=False), flush=True)
+
+    # Diagnostic Plot: 48-Hour Trace on Unseen House
+    print(f"\n[Plots] Generating LOHO Actual vs Predicted Plot for House {test_house} ...", flush=True)
+    test_wm_s = pd.Series(y_test, index=test_index)
+    test_active_days = test_wm_s.resample("D").max()
+    active_days = test_active_days[test_active_days > 1500].index
+
+    if len(active_days) > 0:
+        zoom_start = pd.Timestamp(active_days[len(active_days) // 2]).floor("D")
+    else:
+        zoom_start = test_index[len(test_index) // 2].floor("D")
+    zoom_end = zoom_start + pd.Timedelta(hours=48)
+
+    sub_mask = (test_index >= zoom_start) & (test_index <= zoom_end)
+    t_sub = test_index[sub_mask]
+    actual_sub = y_test[sub_mask]
+    pred_asym_sub = y_pred_asym_thresh[sub_mask]
+    pred_sym_sub = y_pred_sym_thresh[sub_mask]
+    agg_sub = X_test.loc[sub_mask, "agg_power"].values
+
+    fig, (ax_top, ax_mid, ax_bot) = plt.subplots(3, 1, figsize=(16, 11), sharex=True)
+    fig.suptitle(f"REFIT Leave-One-House-Out (LOHO) Disaggregation on Unseen House {test_house}\n"
+                 f"Trained on Houses {train_houses} | 48-Hour Trace ({zoom_start.strftime('%Y-%m-%d')} to {zoom_end.strftime('%Y-%m-%d')})",
+                 fontsize=13, fontweight='bold', y=0.98)
+
+    # Top: Whole-House Aggregate
+    ax_top.plot(t_sub, agg_sub, color="#1f77b4", linewidth=1.1, alpha=0.85, label=f"Whole-House Aggregate (House {test_house})")
+    ax_top.set_ylabel("Aggregate (W)", fontsize=10)
+    ax_top.set_title(f"Input Signal: Unseen Household Aggregate Active Power (House {test_house})", fontsize=11, fontweight='semibold')
+    ax_top.grid(True, linestyle="--", alpha=0.4)
+    ax_top.legend(loc="upper right", fontsize=9)
+
+    # Mid: Actual vs Predicted
+    ax_mid.plot(t_sub, actual_sub, color="#000000", linewidth=1.8, label="Actual Washing Machine (Ground Truth)")
+    ax_mid.plot(t_sub, pred_asym_sub, color="#d62728", linewidth=1.6, alpha=0.95, label="LOHO XGBoost (Asymmetric Peak Loss - Thresholded)")
+    ax_mid.plot(t_sub, pred_sym_sub, color="#ff7f0e", linewidth=1.3, alpha=0.85, linestyle="--", label="LOHO XGBoost (Symmetric MSE - Thresholded)")
+    ax_mid.set_ylabel("Power (Watts)", fontsize=10)
+    ax_mid.set_title("Zero-Shot Generalization: Ground Truth vs. Cross-Household Disaggregation", fontsize=11, fontweight='semibold')
+    ax_mid.grid(True, linestyle="--", alpha=0.4)
+    ax_mid.legend(loc="upper right", fontsize=9)
+
+    # Bot: Error profile
+    error_asym = np.abs(actual_sub - pred_asym_sub)
+    error_sym = np.abs(actual_sub - pred_sym_sub)
+    ax_bot.plot(t_sub, error_sym, color="#ff7f0e", linewidth=1.0, alpha=0.7, linestyle="--", label="LOHO Symmetric MSE Absolute Error")
+    ax_bot.fill_between(t_sub, 0, error_asym, color="#d62728", alpha=0.35, label="LOHO Asymmetric Loss Absolute Error")
+    ax_bot.set_ylabel("Absolute Error (W)", fontsize=10)
+    ax_bot.set_xlabel("Time of Day", fontsize=11)
+    ax_bot.set_title("Cross-Household Disaggregation Error Profile Comparison", fontsize=11, fontweight='semibold')
+    ax_bot.xaxis.set_major_formatter(mdates.DateFormatter("%b %d\n%H:%M"))
+    ax_bot.grid(True, linestyle="--", alpha=0.4)
+    ax_bot.legend(loc="upper right", fontsize=9)
+
+    plt.tight_layout()
+    p_out = PLOT_DIR / f"nilm_loho_house{test_house}_actual_vs_predicted.png"
+    fig.savefig(p_out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {p_out}", flush=True)
+
+    print("\n" + "=" * 70, flush=True)
+    print("  LOHO Cross-Validation Benchmark Complete!", flush=True)
+    print("=" * 70, flush=True)
+    return loho_df
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="REFIT NILM Disaggregation Model")
     parser.add_argument("--house-id", type=int, default=1, help="House ID")
+    parser.add_argument("--loho", action="store_true", help="Run Leave-One-House-Out cross-validation")
+    parser.add_argument("--train-houses", nargs="+", type=int, default=[1, 2, 5, 7], help="Training house IDs for LOHO")
+    parser.add_argument("--test-house", type=int, default=20, help="Target unseen test house ID for LOHO")
     parser.add_argument("--active-thresh", type=float, default=15.0, help="Active power threshold (W)")
     parser.add_argument("--max-pause", type=int, default=5, help="Bridgeable pause duration in minutes (e.g. 5, 8, 10)")
     parser.add_argument("--min-duration", type=int, default=15, help="Minimum cycle duration in minutes")
@@ -667,14 +976,28 @@ if __name__ == "__main__":
                         help="Feature engineering strategy: rolling (O(W) window buffer), ewma (O(1) memory state), or hybrid")
     args = parser.parse_args()
 
-    run_nilm_pipeline(
-        house_id=args.house_id,
-        active_threshold_watts=args.active_thresh,
-        max_pause_min=args.max_pause,
-        min_duration_min=args.min_duration,
-        min_peak_watts=500.0,
-        tolerance_min=args.tolerance_min,
-        cycle_stitch_method=args.stitch_method,
-        under_penalty=args.under_penalty,
-        feature_strategy=args.feature_strategy,
-    )
+    if args.loho:
+        run_loho_experiment(
+            train_houses=args.train_houses,
+            test_house=args.test_house,
+            active_threshold_watts=args.active_thresh,
+            max_pause_min=args.max_pause,
+            min_duration_min=args.min_duration,
+            min_peak_watts=500.0,
+            tolerance_min=args.tolerance_min,
+            cycle_stitch_method=args.stitch_method,
+            under_penalty=args.under_penalty,
+            feature_strategy=args.feature_strategy,
+        )
+    else:
+        run_nilm_pipeline(
+            house_id=args.house_id,
+            active_threshold_watts=args.active_thresh,
+            max_pause_min=args.max_pause,
+            min_duration_min=args.min_duration,
+            min_peak_watts=500.0,
+            tolerance_min=args.tolerance_min,
+            cycle_stitch_method=args.stitch_method,
+            under_penalty=args.under_penalty,
+            feature_strategy=args.feature_strategy,
+        )

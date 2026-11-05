@@ -278,3 +278,4 @@ def run_macro_disaggregation_nmf(
 
 if __name__ == "__main__":
     run_macro_disaggregation_nmf(house_id=1, n_archetypes=4, resolution="30min")
+
