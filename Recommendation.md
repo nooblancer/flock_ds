@@ -84,10 +84,45 @@ Current widespread smart-meter rollouts under India's Revamped Distribution Sect
    A washing machine transitions through distinct operational states (fill $\rightarrow$ heat $\rightarrow$ agitate $\rightarrow$ soak $\rightarrow$ rinse $\rightarrow$ spin) every 2 to 7 minutes. At 15- or 30-minute sampling, the sampling rate is substantially below the Nyquist rate of the underlying appliance state machine. All state transitions occur within a single sample point, stripping away the multi-scale temporal context features (`agg_roll_mean_15`, `agg_diff_5`) that our feature importance analysis proved were the most decisive predictors.
 
 3. **Transformation from Event Detection to Ill-Posed Energy Decomposition:**
-   At 1-minute resolution, NILM operates as an **event-detection and pattern-matching problem** (high signal-to-noise ratio). At 15/30-minute resolution, it degrades into an **under-determined blind source separation problem** where multiple combinations of appliances can produce the exact same half-hourly average kWh. 
+   At 1-minute resolution, NILM operates as an **event-detection and pattern-matching problem** (high signal-to-noise ratio). At 15/30-minute resolution, it degrades into an **under-determined blind source separation problem** where multiple combinations of appliances can produce the exact same half-hourly average kWh.
 
-4. **Strategic Shift in Modeling Paradigm:**
-   At 15- or 30-minute resolution, point-wise regression and sequence-to-point neural networks fail. Utilities must shift toward:
-   * **Hidden Markov Models (HMMs) and Factorial HMMs (FHMM)** that enforce probabilistic state transitions.
-   * **Macroscopic Energy Attribution:** Transitioning from predicting instantaneous kW traces to predicting **daily or weekly appliance energy budget shares** via non-negative matrix factorization (NMF) or aggregate load decomposition.
+---
+
+## 5. Production Solution for Low-Resolution AMI: Macro Energy Attribution via Non-Negative Matrix Factorization (NMF)
+
+To survive in real-world utility environments where DISCOMs only possess 15-minute or 30-minute AMI telemetry, we developed a production fallback pipeline in [`src/macro_disaggregation_nmf.py`](file:///d:/Code/flock_ds/src/macro_disaggregation_nmf.py). Rather than attempting impossible second-by-second regression, we shift the disaggregation target to **Macroscopic End-Use Energy Attribution and Consumer Behavioral Archetyping**.
+
+![NMF Macro Disaggregation](outputs/plots/nmf_macro_disaggregation_30m.png)
+*Figure 7: Macro Energy Attribution on coarse 30-minute telemetry (REFIT House 1). (Top-Left: Nyquist-Shannon smearing comparing 1m, 15m, and 30m intervals; Top-Right: Extracted canonical 24-hour basis load shapes $H$; Bottom-Left: Long-term monthly energy budget attribution shares; Bottom-Right: Longitudinal daily archetype activation weights $W$).*
+
+### 5.1 Mathematical Formulation of the NMF Fallback
+We organize coarse 30-minute interval readings into a Daily Load Matrix $\mathbf{V} \in \mathbb{R}_{+}^{D \times 48}$, where each row represents one full day (48 half-hour slots) and each cell contains average active power in Watts.
+
+We formulate the blind decomposition into $K$ non-negative basis archetypes:
+$$\mathbf{V} \approx \mathbf{W} \mathbf{H}$$
+$$\min_{\mathbf{W} \ge 0, \mathbf{H} \ge 0} \frac{1}{2} \|\mathbf{V} - \mathbf{W}\mathbf{H}\|_F^2 + \alpha \|\mathbf{W}\|_1 + \beta \sum_{k=1}^K \|\mathbf{D} \mathbf{H}_k\|_2^2$$
+
+where:
+* $\mathbf{V} \in \mathbb{R}_{+}^{D \times 48}$: Observed historical daily load shapes (537 days analyzed in House 1).
+* $\mathbf{W} \in \mathbb{R}_{+}^{D \times K}$: **Daily Activation Weights**, indicating the intensity of each behavioral archetype on day $d$.
+* $\mathbf{H} \in \mathbb{R}_{+}^{K \times 48}$: **Canonical Diurnal Basis Load Shapes**, capturing the underlying normalized 24-hour profiles of $K$ distinct end-use categories:
+  - **Archetype 0 (Daytime Solar-Coincident):** Peaks between 11:00 AM and 14:00 PM, capturing laundry wash cycles and daytime domestic cooking.
+  - **Archetype 1 (Night Off-Peak Operations):** Constant low-level nocturnal consumption (23:00 to 06:00).
+  - **Archetype 2 (Evening System Peak):** Sharp crest between 18:00 and 22:00 PM (lighting, entertainment, cooling/space heating).
+  - **Archetype 3 (Midday Secondary Peak):** Afternoon active appliances (14:00 to 16:00 PM).
+
+### 5.2 Monthly End-Use Energy Attribution for Utilities
+Using the fitted matrices, the utility calculates the **long-term electrical energy attributed to archetype $k$**:
+$$E_k = \sum_{d=1}^D W_{d,k} \left(\sum_{t=1}^{48} H_{k,t} \times \frac{0.5\text{ hours}}{1000}\right) \quad (\text{kWh})$$
+$$\text{Budget Share}_k = \frac{E_k}{\sum_{j=1}^K E_j} \times 100\%$$
+
+**Empirical House 1 Findings (537 Days Analyzed, 6,163.06 kWh Total Consumption):**
+- **Daytime Domestic / Laundry Archetype:** Accounts for **$21.80\%$ of total consumption (1,341.97 kWh)**, peaking at 12:00 PM.
+- **Evening Peak Household Load:** Accounts for **$33.88\%$ of total load (2,085.85 kWh)**, peaking at 21:00 PM.
+- **Ground-Truth Cross-Check:** True washing machine energy represents **$2.29\%$ of the total household bill (141.03 kWh)**, which loads systematically onto the Daytime Domestic Basis Component.
+
+### 5.3 Utility Use Cases for 15/30-Minute Macro Attribution
+1. **Itemized Monthly Bill Estimates:** Even with coarse 30-minute meters, DISCOMs can display monthly category pie charts (e.g. "Baseload: 31%, Daytime Cooking/Laundry: 22%, Evening Peak: 34%") on customer mobile apps.
+2. **Personalized Tariff Targeting:** DISCOMs identify consumers whose Archetype 2 (Evening Peak) exceeds 40% of their total bill, enrolling them in automated smart-geyser or battery storage peak-shaving incentives.
+3. **Distribution Transformer Overload Forecasting:** Aggregating archetype weight vectors $W$ across all meters on a feeder allows distribution engineers to simulate transformer loading under rapid EV or heat-pump adoption.
 

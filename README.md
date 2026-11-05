@@ -88,6 +88,9 @@ python run_pipeline.py --stage 1    # Setup verification
 python run_pipeline.py --stage 2    # House 1 raw inspection & 1-min cleaning
 python run_pipeline.py --stage 3    # Multi-house washing machine EDA & cycle detection
 python run_pipeline.py --stage 4    # NILM disaggregation model & baseline benchmarking
+
+# Low-Resolution (15m/30m) AMI Macro Disaggregation via NMF:
+python src/macro_disaggregation_nmf.py
 ```
 
 ### Interactive Exploration

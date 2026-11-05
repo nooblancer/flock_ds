@@ -280,3 +280,4 @@ class StreamingEdgeBuffer:
         if state["last_timestamp"]:
             buf.last_timestamp = pd.Timestamp(state["last_timestamp"])
         return buf
+

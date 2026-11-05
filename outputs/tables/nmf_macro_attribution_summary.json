@@ -1,0 +1,45 @@
+{
+  "house_id": 1,
+  "resolution": "30min",
+  "days_analyzed": 537,
+  "total_household_kwh": 6163.06,
+  "total_true_wm_kwh": 141.03,
+  "true_wm_share_pct": 2.29,
+  "peak_smearing": {
+    "peak_1min_watts": 2461.8,
+    "peak_15min_watts": 2256.0,
+    "peak_30min_watts": 2256.0,
+    "attenuation_15m_pct": 8.36,
+    "attenuation_30m_pct": 8.36
+  },
+  "archetypes": [
+    {
+      "archetype_id": 0,
+      "label": "Archetype B: Daytime Solar-Coincident (Laundry & Cooking)",
+      "peak_hour": 12.0,
+      "attributed_kwh": 1341.97,
+      "energy_share_pct": 21.8
+    },
+    {
+      "archetype_id": 1,
+      "label": "Archetype D: Night/Early-Morning Off-Peak Operations",
+      "peak_hour": 2.5,
+      "attributed_kwh": 1889.38,
+      "energy_share_pct": 30.69
+    },
+    {
+      "archetype_id": 2,
+      "label": "Archetype C: Evening System Peak (Lighting, Space Heating & Entertainment)",
+      "peak_hour": 21.0,
+      "attributed_kwh": 2085.85,
+      "energy_share_pct": 33.88
+    },
+    {
+      "archetype_id": 3,
+      "label": "Archetype B: Daytime Solar-Coincident (Laundry & Cooking)",
+      "peak_hour": 14.5,
+      "attributed_kwh": 839.17,
+      "energy_share_pct": 13.63
+    }
+  ]
+}
