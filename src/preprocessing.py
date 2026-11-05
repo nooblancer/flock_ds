@@ -26,46 +26,27 @@ def create_nilm_features(
     mode: str = "batch",
     feature_strategy: str = "rolling",
 ) -> pd.DataFrame:
-    """Engineer temporal context features strictly within an isolated partition.
+    """Extract temporal context features for an isolated chronological partition.
 
-    DATA LEAKAGE AUDIT GUARANTEE:
-    -----------------------------
-    To eliminate temporal boundary leakage, this function is executed STRICTLY
-    AFTER the chronological train/val/test split. Because df_partition is an
-    isolated slice, no future samples from validation or test partitions can
-    inform the training features, and vice versa.
-
-    Edge IoT & EWMA Feature Formulation:
-    ------------------------------------
-    When `feature_strategy='ewma'`:
-      Instead of maintaining rigid 15-60 minute sliding window buffers in RAM
-      (which suffer buffer overflow, index desynchronization, and cold-start
-      crashes during packet loss), the model computes recursive Exponentially
-      Weighted Moving Averages (EWMA):
-          M_t = alpha * x_t + (1 - alpha) * M_{t-1}
-      where alpha = 2 / (span + 1).
-      This achieves identical 0.957 correlation with rolling windows while
-      reducing memory complexity from O(W) to O(1) state per span!
+    Features are computed strictly per partition (train, val, test) to prevent
+    temporal boundary leakage across splits.
 
     Parameters
     ----------
     df_partition : pd.DataFrame
-        1-minute resampled DataFrame for a single isolated partition (Train, Val, or Test).
-    agg_col : str
-        Column name of whole-home aggregate active power.
-    mode : {"batch", "causal"}
-        - "batch": Symmetrical rolling windows & centered statistics suitable for
-          offline next-day utility disaggregation (Seq2Point paradigm).
-        - "causal": Strictly trailing historical statistics suitable for real-time streaming.
-    feature_strategy : {"rolling", "ewma", "hybrid"}
-        - "rolling": Multi-scale moving statistics (5, 15, 30, 60 minutes).
-        - "ewma": O(1) memory exponential moving averages and variance.
-        - "hybrid": Joint feature set containing both rolling and EWMA representations.
+        1-minute resampled telemetry for a single partition.
+    agg_col : str, default 'Aggregate'
+        Column name for aggregate active power.
+    mode : {"batch", "causal"}, default "batch"
+        "batch" uses centered rolling windows; "causal" uses trailing statistics.
+    feature_strategy : {"rolling", "ewma", "hybrid"}, default "rolling"
+        "rolling" uses moving window stats; "ewma" uses O(1) recursive averages;
+        "hybrid" computes both representations.
 
     Returns
     -------
     pd.DataFrame
-        Matrix of engineered features aligned with df_partition.index.
+        Feature matrix aligned with df_partition.index.
     """
     df = df_partition.copy()
     s = df[agg_col]
@@ -123,32 +104,11 @@ def create_nilm_features(
 # ────────────────────────────────────────────────────────────────────────────
 
 class StreamingEdgeBuffer:
-    """O(1) Memory Stateful Streaming Buffer for Edge IoT Smart Meters.
+    """O(1) memory stateful streaming buffer for edge smart meter gateways.
 
-    Edge Computing Architecture:
-    ----------------------------
-    Low-power smart meter gateways (e.g. ESP32, ARM Cortex-M microcontrollers)
-    face stringent resource limits (<256 KB RAM) and intermittent cellular / RF
-    network drops.
-
-    This buffer eliminates the need to store circular sliding arrays in memory.
-    Instead, it maintains recursive summary statistics requiring under 200 bytes:
-      - Exponentially Weighted Moving Averages (means and variances) across spans (5, 15, 30, 60m).
-      - Previous power reading and timestamp for step differential (agg_diff_1).
-      - Step counter for cold-start debiasing.
-
-    Cold-Start Recovery & Gap-Aware Adaptation:
-    -------------------------------------------
-    1. Cold-Start Initialization:
-       When the device boots (step 0), the initial state is initialized directly:
-           M_0 = x_0,  V_0 = 0.0
-       Bias correction ensures estimates do not start falsely dragged to 0 W:
-           M_corrected = M_t / (1 - (1 - alpha)^t)
-    2. Irregular Time-Delta & Packet Drop Tolerance:
-       When network packet loss or sleep cycles produce gaps Delta_t > 1 minute,
-       the discrete alpha is dynamically adapted via continuous exponential decay:
-           alpha_{Delta_t} = 1 - exp(-Delta_t / tau), where tau = span / 2.
-       This ensures smooth tracking without buffer desynchronization.
+    Maintains recursive EWMA means and variances across spans (5, 15, 30, 60 min)
+    in under 200 bytes of RAM, with cold-start bias correction and continuous-time
+    decay adaptation for irregular telemetry gaps.
     """
 
     def __init__(self, spans: Tuple[int, ...] = (5, 15, 30, 60)):

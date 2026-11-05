@@ -37,7 +37,7 @@ docker run --rm -v "$(pwd)/data:/app/data" -v "$(pwd)/outputs:/app/outputs" floc
 ## 1. Project Overview & Architecture
 
 This repository delivers an end-to-end, production-grade Non-Intrusive Load Monitoring (NILM) and smart-meter analytics pipeline. Built for electricity distribution companies (DISCOMs) and demand-side management teams, this project addresses two core challenges:
-1. **Raw Telemetry Ingestion & Robust Cleaning:** Auditing high-frequency (~8-second), asynchronous, raw smart-meter readings for House 1, correcting timestamps, resolving duplicate records, eliminating impossible spikes, and implementing gap-aware 1-minute resampling.
+1. **Raw Telemetry Ingestion & Data Cleaning:** Auditing high-frequency (~8-second), asynchronous, raw smart-meter readings for House 1, correcting timestamps, resolving duplicate records, eliminating impossible spikes, and implementing gap-aware 1-minute resampling.
 2. **Washing Machine Analytics & Disaggregation Modeling:** Characterizing washing-machine operational cycles across $\ge 4$ households and training a rolling-context gradient boosting model (XGBoost) to accurately disaggregate washing-machine active power from the single whole-home Aggregate meter signal.
 
 ```
@@ -52,7 +52,7 @@ flock_ds/
 ├── src/                                # Modular source code
 │   ├── __init__.py
 │   ├── config.py                       # Central paths, appliance mappings, constants
-│   ├── data_ingestion.py               # Robust loaders & summary diagnostic utilities
+│   ├── data_ingestion.py               # Data loaders & summary diagnostic utilities
 │   ├── inspect_raw_house1.py           # Raw House 1 quality inspection script
 │   ├── clean_house1.py                 # 7-stage cleaning & 1-minute resampling pipeline
 │   ├── plot_house1_cleaning.py         # Before/after cleaning visualization module
@@ -190,7 +190,7 @@ Because a single static power measurement cannot differentiate a 2,000 W kettle 
 | **XGBoost (Asymmetric Loss - Raw)** | 10.80 W | 83.33 W | 15.09% | 15.55 | **9.96** | 0.3611 | 0.6275 | **0.8312** | 0.7151 | **64 / 77** |
 | **XGBoost (Asymmetric Loss - Thresholded)**| 9.94 W | **83.32 W** | **7.20%** | 13.23 | **9.96** | 0.3611 | 0.6275 | **0.8312** | 0.7151 | **64 / 77** |
 
-* **Resolving the Thresholding Paradox:** In standard symmetric MSE, raw RETE was artificially suppressed (4.86%) because 11.29 kWh of low-wattage idle false positives serendipitously cancelled out 10.92 kWh of peak under-predictions. Thresholding (<10 W) removed the idle noise, exposing the uncompensated peak deficit and causing RETE to degrade to 10.71%. Our custom **Asymmetric Peak-Weighted Loss** ($2.0\times$ penalty on active peaks) penalizes peak under-predictions, boosting Event Recall to **83.12% (64/77 cycles)**, lowering Test RMSE to **83.32 W**, and achieving an honest, robust post-thresholded RETE of **7.20%**!
+* **Resolving the Thresholding Paradox:** In standard symmetric MSE, raw RETE was artificially low (4.86%) because 11.29 kWh of low-wattage idle false positives cancelled out 10.92 kWh of peak under-predictions. Thresholding (<10 W) removed the idle noise, exposing the uncompensated peak deficit and causing RETE to degrade to 10.71%. The custom **Asymmetric Peak-Weighted Loss** ($2.0\times$ penalty on active peaks) penalizes peak under-predictions, raising Event Recall to **83.12% (64/77 cycles)**, lowering Test RMSE to **83.32 W**, and achieving a post-thresholded RETE of **7.20%**.
 
 ### Leave-One-House-Out (LOHO) Zero-Shot Cross-Household Generalization (Test: House 20, 200 cycles)
 

@@ -1,32 +1,11 @@
-"""
-Raw-data cleaning pipeline for REFIT House 1 (Hardened Chunked & Streaming Ingestion).
+"""Chunked streaming cleaning and 1-minute resampling pipeline for REFIT House 1.
 
-Memory Bounded Guarantee:
--------------------------
-Standard in-memory pandas loading loads all 8.5+ million rows into RAM, spiking
-memory usage to > 2.3 GB and causing Out-Of-Memory (OOM) fatal crashes on CI/CD
-runners or edge microcontrollers.
-
-This hardened pipeline implements streaming chunked ingestion:
-  1. Iterative Chunked Loading:
-     Streams Part 1 and Part 2 via `pd.read_csv(chunksize=100000)`.
-  2. Streaming Two-Way Merge & Deduplication:
-     Performs a streaming two-way chronological merge across Part 1 and Part 2,
-     strictly prioritizing Part 2 NaN semantics where timestamps overlap.
-     Deduplicates Part 1 consecutive timestamps in O(1) memory state.
-  3. Iterative Physical Clipping:
-     Clips sensor baseline noise (<0W -> 0) and impossible spikes (>10,000W -> NaN).
-  4. Iterative Gap-Aware Interpolation:
-     Performs linear time interpolation for short gaps (<= 37 readings ~ 5 min)
-     utilizing a 50-row boundary carryover buffer to ensure zero leakage or artifacts.
-  5. Iterative 1-Minute Resampling:
-     Maintains strict minute-boundary alignment across successive chunks so that
-     no minute interval is fragmented. Computes exact mean power consumption.
-  6. Post-Resample Outage Flagging:
-     Identifies missing telemetry minutes as explicit Outages (never hallucinated).
-  7. Bounded Peak RAM Footprint:
-     Peak memory is strictly audited via `tracemalloc` to remain < 500 MB (typically ~180 MB)
-     regardless of whether the input CSV is 500 MB or 50 GB.
+Processes raw Part 1 and Part 2 CSVs iteratively to maintain peak RAM < 200 MB:
+1. Streaming two-way merge prioritizing Part 2 on timestamp overlap (NaN semantics).
+2. Out-of-bounds clipping (<0 W to 0, >10,000 W to NaN).
+3. Forward linear interpolation for short gaps (<= 5 min / 37 readings) with boundary buffer.
+4. Resampling to 1-minute intervals preserving minute boundaries.
+5. Reindexing onto continuous 1-minute grid and flagging missing intervals as Outage=1.
 
 Run standalone:
     python -m src.clean_house1

@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set container working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker layer caching
+# Copy requirements first for Docker layer caching
 COPY requirements.txt /app/requirements.txt
 
 # Upgrade pip and install production-locked dependencies

@@ -67,25 +67,8 @@ def match_and_evaluate_events(
 ) -> dict:
     """Evaluate event detection by matching predicted cycles to ground-truth cycles.
 
-    Matching Criteria & Tolerance Window:
-    ------------------------------------
-    A predicted cycle matches a ground-truth cycle if:
-      1. Their operating intervals overlap in time: max(p_start, t_start) <= min(p_end, t_end)
-         OR
-      2. Their cycle start times agree within `tolerance_min` (e.g. +/- 5 minutes).
-
-    Each predicted cycle matches at most one ground-truth cycle (1-to-1 greedy matching).
-
-    Probabilistic Transition Pathway:
-    ---------------------------------
-    While greedy matching with fixed tolerance is the standard in NILMTK benchmarks,
-    real-world smart meter deployments benefit from probabilistic bipartite matching:
-      - Calculating soft temporal intersection-over-union (tIoU) scores:
-          tIoU(P, T) = |P ∩ T| / |P ∪ T|
-      - Utilizing the Hungarian Algorithm (Munkres algorithm) to maximize global tIoU
-        rather than greedy local assignment.
-      - Incorporating energy error weighting so matches that capture the true energy
-        are favored over trivial threshold crossings.
+    Matches cycles using greedy assignment based on interval overlap and start-time
+    proximity within `tolerance_min`.
 
     Parameters
     ----------
@@ -94,12 +77,12 @@ def match_and_evaluate_events(
     pred_cycles : list[dict]
         Predicted appliance cycles.
     tolerance_min : int, default 5
-        Temporal tolerance window in minutes for cycle onset matching.
+        Start-time tolerance in minutes.
 
     Returns
     -------
-    dict: true_events, pred_events, tp_events, fp_events, fn_events,
-          event_precision, event_recall, event_f1
+    dict
+        Precision, recall, F1, and count metrics for cycle events.
     """
     matched_true = set()
     matched_pred = set()
@@ -158,47 +141,18 @@ def asymmetric_mse_objective(
     under_penalty: float = 2.0,
     active_threshold: float = 500.0,
 ):
-    """Custom Asymmetric Weighted MSE objective for XGBoost.
+    """Custom asymmetric weighted MSE objective for XGBoost.
 
-    Mathematical Formulation:
-    -------------------------
-    Standard MSE loss:
-        L(y, y_hat) = 1/2 * (y_hat - y)^2
-
-    Asymmetric Weighted MSE:
+    Penalizes under-predictions during active peak cycles (>= active_threshold)
+    more heavily than over-predictions during idle baseline periods:
         L(y, y_hat) = 1/2 * w(y, y_hat) * (y_hat - y)^2
 
-    where weight w is piecewise defined:
-        w(y, y_hat) = under_penalty   if (y >= active_threshold and y_hat < y)
-                    = 1.5             if (y >= 15.0 and y < active_threshold and y_hat < y)
-                    = 1.0             otherwise
-
-    First-order gradient (w.r.t y_hat):
-        grad = w * (y_hat - y)
-
-    Second-order hessian (w.r.t y_hat):
-        hess = w
-
-    The Thresholding Paradox Explained:
-    -----------------------------------
-    In residential NILM, appliances remain idle (~0W) for ~98% of the time.
-    Standard symmetric MSE aggressively penalizes large errors uniformly:
-        (1500W - 2200W)^2 = 490,000 W^2
-    To minimize global sample MSE, the optimizer regresses peak predictions
-    downward towards zero, but compensates by predicting a persistent low-level
-    noise floor (5-15W) across idle intervals.
-    Over 160,000 test minutes, this idle noise sums to multiple kilowatt-hours,
-    serendipitously cancelling the energy deficit from the suppressed peaks:
-        Net Bias = (Idle Bleed ~+13.2 kWh) - (Peak Deficit ~-10.2 kWh) ~ +3.0 kWh
-    This creates an artificially optimistic raw RETE (4.86%).
-
-    When a sensible engineering threshold is applied (e.g. zeroing power < 10W),
-    the idle noise is eliminated, exposing the uncompensated peak deficit and
-    causing RETE to degrade to 10.71%.
-
-    By heavily penalizing under-predictions during active cycles (under_penalty >= 2.0),
-    the asymmetric objective drives the model to capture the full amplitude of
-    the 2 kW heating cycles, eliminating the reliance on false-positive idle noise.
+    Parameters
+    ----------
+    under_penalty : float, default 2.0
+        Loss multiplier applied when y >= active_threshold and y_hat < y.
+    active_threshold : float, default 500.0
+        Threshold in Watts separating high-power peaks from baseline load.
     """
     def custom_obj(y_true, y_pred) -> tuple[np.ndarray, np.ndarray]:
         if hasattr(y_true, "get_label"):

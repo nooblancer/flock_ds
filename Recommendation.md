@@ -8,7 +8,7 @@
 
 ## 1. Executive Summary & Suitable Uses of the Disaggregation Model
 
-Modern power distribution utilities face unprecedented peak-demand challenges driven by peak load spikes, localized transformer overloads, and high evening power procurement costs. Non-Intrusive Load Monitoring (NILM) enables utilities to derive appliance-level visibility from whole-home smart-meter telemetry without deploying costly in-home sub-metering hardware.
+Power distribution utilities face growing peak-demand challenges driven by localized transformer overloads and elevated evening power procurement costs. Non-Intrusive Load Monitoring (NILM) provides appliance-level visibility from whole-home smart-meter telemetry without requiring in-home sub-metering hardware.
 
 Our empirical evaluation on longitudinal REFIT telemetry demonstrated that an optimized gradient boosting pipeline with rolling temporal context achieves:
 * **91.9% event recall** in detecting active washing machine cycles.

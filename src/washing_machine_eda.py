@@ -58,55 +58,29 @@ def detect_washing_cycles(
 ) -> list[dict]:
     """Detect discrete operating cycles from a 1-minute washing machine power series.
 
-    Configurable Physical & Density Stitching:
-    -----------------------------------------
-    A washing machine cycle is defined as a continuous operational window where:
-      1. Power exceeds `on_thresh` (default 15 W, separating operational agitation from standby).
-      2. Intermittent pauses of up to `max_pause` minutes (e.g., drum soaking, water filling, 
-         unbalance correction) are bridged into the active cycle.
-      3. Total cycle duration must meet or exceed `min_duration` (default 15 minutes).
-      4. Peak power reached during the cycle must exceed `min_peak` (default 500 W),
-         confirming thermal water heating or high-torque spin extraction.
-
-    Transition Pathway from Heuristics to Probabilistic Grouping:
-    ------------------------------------------------------------
-    Hardcoded pause-bridges (e.g. strict 5-minute gap limits) suffer from fragility
-    across differing washing programs: eco-modes often incorporate prolonged drum-soak
-    phases (8-12 minutes) where power drops to 0 W. A rigid 5-minute rule falsely fragments
-    a single wash into two disjoined cycles, corrupting utility event counts.
-
-    Supported Algorithms:
-      - 'dynamic_bridge': Vectorized 1D difference bridging on active masks with user-defined
-        `max_pause` tolerance (O(N) runtime, highly optimized for telemetry streaming).
-      - 'dbscan': Density-based spatial clustering (1D DBSCAN) on active minute indices with
-        neighborhood radius `eps = max_pause + 1` and `min_samples = 1`. Clusters contiguous
-        density regions separated by low-density idle gaps.
-
-    Production Next Steps:
-      In edge production gateways, this deterministic grouping can be superseded by
-      Explicit-Duration Hidden Semi-Markov Models (HSMM) or Factorial HMMs (FHMM),
-      where the 'soak' state is an explicit latent state with a non-parametric duration
-      distribution, completely eliminating heuristic threshold tuning.
+    A washing cycle is defined as an active window where power exceeds `on_thresh`,
+    intermittent pauses up to `max_pause` minutes are bridged, total duration is
+    at least `min_duration`, and peak power exceeds `min_peak`.
 
     Parameters
     ----------
     series_1min : pd.Series
-        1-minute resampled power readings (Watts) with DatetimeIndex.
+        1-minute power readings (Watts) with DatetimeIndex.
     on_thresh : float, default 15.0
-        Power threshold in Watts to consider active.
+        Active power threshold in Watts.
     min_duration : int, default 15
-        Minimum valid cycle length in minutes.
+        Minimum valid cycle duration in minutes.
     max_pause : int, default 5
-        Maximum gap in minutes between active readings to bridge into one cycle.
+        Maximum inactive pause in minutes bridged within an ongoing cycle.
     min_peak : float, default 500.0
-        Minimum peak power in Watts required across the cycle.
+        Minimum peak power required to confirm thermal or motor engagement.
     method : {"dynamic_bridge", "dbscan"}, default "dynamic_bridge"
-        Algorithm used to bridge temporal gaps between active phases.
+        Temporal grouping method: vectorized index bridging or 1D DBSCAN.
 
     Returns
     -------
     list of dict
-        Each dict contains: start, end, duration_min, mean_power_w, peak_power_w, energy_kwh.
+        Cycle records with start, end, duration_min, mean_power_w, peak_power_w, energy_kwh.
     """
     clean_s = series_1min.dropna()
     if clean_s.empty:

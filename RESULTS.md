@@ -41,7 +41,7 @@ We evaluated **5 diverse households** from the official cleaned REFIT dataset, r
 * **Interpretation:** 
   - A single, prominent wash cycle starts in the late morning (~11:00 AM).
   - The cycle begins with a sharp, sustained spike reaching **~2,200–2,400 W** corresponding to the electric resistance heating element bringing water to the preset temperature.
-  - Notice that during the heating phase, the washing machine accounts for almost **100% of the whole-home aggregate demand**, creating an unmistakable rectangular pulse on the aggregate channel.
+  - During the heating phase, the washing machine accounts for nearly **100% of whole-home aggregate demand**, creating a rectangular pulse on the aggregate channel.
   - Subsequently, power drops to 150–350 W with rhythmic oscillations (drum rotation and drain pump), before terminating with several short spin spikes.
   - At other times of the day (e.g. evening meal hours), aggregate spikes occur without washing machine activity, caused by other cooking or heating appliances (kettle, toaster, oven).
 
@@ -63,7 +63,7 @@ We evaluated **5 diverse households** from the official cleaned REFIT dataset, r
 *Figure 3: Cross-household behavioral and electrical comparisons across Houses 1, 2, 5, 7, and 20. (Top-Left: Diurnal start probability; Top-Right: Weekly day-of-week distribution; Bottom-Left: Cycle duration distributions; Bottom-Right: Energy consumption per cycle).*
 
 * **Interpretation:**
-  1. **Diurnal Timing (Top-Left):** Across all households, washing machine activity is heavily concentrated between **08:00 AM and 13:00 PM**, with a secondary minor peak around **18:00–20:00 PM**. Overnight starts (00:00–06:00 AM) are virtually zero, highlighting that UK households in this sample do not leverage Economy-7 overnight tariffs for laundry.
+  1. **Diurnal Timing (Top-Left):** Across all households, washing machine activity is heavily concentrated between **08:00 AM and 13:00 PM**, with a secondary minor peak around **18:00–20:00 PM**. Overnight starts (00:00–06:00 AM) are near zero, indicating that UK households in this sample do not shift laundry to Economy-7 overnight tariffs.
   2. **Day-of-Week Variation (Top-Right):** Usage patterns diverge across lifestyles: House 7 and House 5 maintain steady laundry activity across all 7 days with minor weekend spikes. In contrast, House 1 and House 2 exhibit pronounced **Sunday and Saturday spikes**, where weekend wash starts account for over 35% of all cycles.
   3. **Cycle Duration Heterogeneity (Bottom-Left):** Median cycle durations vary substantially: House 1 defaults to rapid ~33-minute cycles; House 7 averages 60 minutes; while House 2 defaults to prolonged ~99-minute wash programs.
   4. **Energy Consumption per Wash (Bottom-Right):** Mean energy per cycle ranges from **0.334 kWh in House 1** up to **0.605 kWh in House 2**. This ~1.8x difference is primarily driven by cycle duration and water heating temperature preferences rather than machine rated wattage (all have similar heating peaks of 2.0–2.3 kW).
@@ -145,7 +145,7 @@ $$L_{\text{asym}}(y, \hat{y}) = \frac{1}{2} w(y, \hat{y}) (\hat{y} - y)^2, \quad
 #### Critical Analytical Insights:
 * **The MAE vs. Sparsity Paradox:** Baseline 1 (Always-Off) yields an artificially competitive MAE of **11.02 W** purely because the washing machine is inactive for 98.02% of test minutes. However, it detects zero cycles ($F_{1,\text{event}} = 0$) and loses 100% of true energy consumption. In NILM, reporting MAE in isolation without event recall or RETE is deceptive.
 * **Macro Event Detection:** The XGBoost model successfully captures **62 out of 77 ground-truth washing cycles (Event Recall = 80.52%)** within a $\pm 5$-minute tolerance window, achieving an **Event Precision of 71.26%** and an **Event F1-score of 0.7561**.
-* **Net Energy Attribution (RETE = 4.86%):** For distribution utilities calculating monthly carbon offsets or DSM feeder relief, cumulative energy accuracy is paramount. Raw XGBoost predicted **28.09 kWh vs. 29.52 kWh actual (an error of only 4.86%)**, outperforming the Diurnal baseline by a wide margin.
+* **Net Energy Attribution (RETE = 4.86%):** For distribution utilities calculating monthly energy attribution or DSM feeder relief, cumulative energy accuracy is the primary objective. Raw XGBoost predicted **28.09 kWh vs. 29.52 kWh actual (an error of 4.86%)**, outperforming the Diurnal baseline.
 
 ---
 
@@ -216,7 +216,7 @@ To eliminate brittle magic numbers, we refactored cycle extraction across [`src/
    - When evaluated with `eps=8m` under DBSCAN, the Asymmetric Loss model achieves **87.32% Event Recall (62 out of 71 cycles captured)**.
 
 #### Transition Pathway to Probabilistic State Modeling
-While 1D DBSCAN provides a robust non-parametric grouping on active samples, edge IoT gateways and utility backends benefit from migrating toward **probabilistic generative models**:
+While 1D DBSCAN provides non-parametric grouping on active samples, edge IoT gateways and utility backends can alternatively use **probabilistic generative models**:
 * **Explicit-Duration Hidden Semi-Markov Models (HSMM):** Rather than modeling cycles via deterministic gap rules, an HSMM explicitly defines latent states (e.g. $S \in \{\text{Idle}, \text{Water Heating}, \text{Soak / Rest}, \text{Agitate / Spin}\}$). The 'Soak' state is modeled as an emission with mean $\mu \approx 0\text{ W}$ paired with a non-parametric duration distribution (e.g. Gamma or Poisson distribution over 5–15 minutes).
 * **Factorial HMMs (FHMM):** Disentangles multiple concurrent household appliances into independent parallel Markov chains, allowing the soaking phase of a washer to be tracked even while an oven or kettle operates in the background.
 
@@ -335,7 +335,7 @@ $$\frac{\Delta P}{P_{\text{nom}}} = \left(\frac{210}{240}\right)^2 - 1 = (0.875)
    When active power drops from $2.0\text{ kW}$ to $1.53\text{ kW}$, the thermostatic switch must keep the heating element energized for **$\approx 30.6\%$ longer** to deliver the same thermal energy ($t_{\text{heat}} \propto 1/P$). This artificially elongates the heating duration, further warping temporal features and confounding models calibrated on fixed cycle durations.
 
 #### 4. Future Iteration Roadmap: Production Solutions for Distribution Resilience
-To achieve true utility-grade robustness against distribution grid dynamics, future AMI deployments and NILM modeling iterations must adopt the following architectural upgrades:
+For production resilience against distribution grid dynamics, future AMI deployments and disaggregation iterations should incorporate:
 
 1. **Dynamic Voltage Normalization via AMI Voltage Telemetry ($V_{\text{rms}}$):**
    Modern smart meters (compliant with DLMS/COSEM, IS 16444, or ANSI C12) possess onboard metrology processors that measure RMS voltage. Ingestion pipelines should dynamically normalize active power back to standard reference voltage ($V_{\text{ref}} = 230\text{ V}$ or $240\text{ V}$) prior to feature engineering:

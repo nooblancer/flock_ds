@@ -19,7 +19,7 @@ Data characteristics
   re-aligned after sensor swaps, NaN forward-filled, spikes > 4 kW zeroed, and
   an ``Issues`` column flagging rows where ΣIAMs > Aggregate.
 * **Coverage**: 20 UK households, Oct 2013 – Jul 2015 (House 14 skipped).
-* **Known gaps**: Notably Feb 2014; causes include internet/hardware failures.
+* **Known gaps**: In particular Feb 2014; causes include internet/hardware failures.
 """
 
 from __future__ import annotations
