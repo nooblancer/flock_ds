@@ -63,11 +63,30 @@ Applying machine learning models trained on UK datasets (such as REFIT) to India
 | **Grid Power Quality & Voltage Stability** | Highly stable 230 V (±1%) grid with virtually zero voltage sag or unscheduled outages. | Significant voltage fluctuations (180 V to 260 V), harmonic distortion, and localized rooftop solar inverter clipping. | Active power drawn by resistive elements varies quadratically with voltage ($P = V^2 / R$). A 2 kW element drops to ~1.2 kW at 180 V, violating fixed threshold assumptions and distorting energy integrals. |
 | **Ground-Truth Data Scarcity** | Ground-truth sub-metered IAM datasets (REFIT, UK-DALE) available for supervised training. | Extreme scarcity of sub-metered ground truth in Indian households (smart meters record aggregate only). | Precludes naive supervised regression. Demands **semi-supervised transfer learning**, domain-adversarial neural networks (DANN), or physics-guided synthetic signature injection. |
 
-### Technical Roadmap for Indian Utility Deployment
-To adapt NILM for Indian DISCOMs, we recommend:
-1. **Motor-Signature Feature Engineering:** Transitioning from macro-power rolling averages to **high-frequency periodic oscillation filters** (e.g. Fourier/wavelet spectral analysis detecting the 0.5–2.0 Hz drum reversal cadence characteristic of pulsator motors).
+### 3.2 Grid Physics Limitations & Voltage Sags: Ohmic Warping of Active Power Signatures
+
+A critical technical risk when deploying NILM into real-world distribution utilities is the **voltage sensitivity of resistive loads**.
+
+#### 1. The Ohmic Power Equation ($P = V^2 / R$)
+Water-heating elements inside appliances are purely resistive conductors with fixed internal resistance $R$. By Joule's and Ohm's Laws, instantaneous power $P(t)$ scales quadratically with line voltage:
+$$P(t) = \frac{V(t)^2}{R}$$
+
+For an appliance rated at $2.0\text{ kW}$ under nominal $240\text{ V}$ ($R = 240^2 / 2000 = 28.8\,\Omega$), any drop in grid voltage drastically reduces active power draw:
+* If evening peak demand causes feeder voltage to sag from **$240\text{ V}$ down to $210\text{ V}$** (a $12.5\%$ voltage sag), the active power drawn by the heating element collapses to:
+  $$P_{\text{sag}} = \frac{210^2}{28.8} \approx 1,531\text{ W} \quad (-23.44\%)$$
+* In Indian distribution feeders (where statutory tolerance allows $\pm 6\%$ but actual evening voltages routinely drop to $180\text{ V}$), the same heating element drops to **$1,125\text{ W}$ (a $-43.75\%$ collapse)**.
+
+#### 2. Why Active-Power Models Fail Under Distribution Grid Stress
+1. **Signature Distortion:** When voltage sags, the characteristic $2.0\text{ kW}$ rectangular signature collapses to $\sim 1.5\text{ kW}$. Fixed-power thresholds, edge decision boundaries, and gradient boosting trees trained on stable 240V telemetry will miss the event entirely (false negative) or misclassify it as an oven or space heater.
+2. **Cycle Duration Elongation:** Because thermal energy $Q = \int P(t)\,dt$ requires a fixed quantity of Joules to heat the water to target temperature, a $-23.4\%$ reduction in power forces the thermostatic controller to keep the element energized for **$\approx 30.6\%$ longer**. This stretches the duration profile, confounding temporal pattern matchers.
+
+### 3.3 Technical Roadmap for Indian Utility Deployment
+To adapt NILM for Indian DISCOMs and ensure resilience against distribution stress, we recommend:
+1. **Dynamic Voltage Normalization:** Advanced Metering Infrastructure (AMI) complying with DLMS/COSEM or IS 16444 must transmit instantaneous $V_{\text{rms}}$ alongside active power. The ingestion pipeline dynamically normalizes power back to standard reference voltage:
+   $$P_{\text{norm}}(t) = P(t) \cdot \left(\frac{V_{\text{ref}}}{V(t)}\right)^2$$
 2. **Harmonic & Power Factor Sensing:** Using the active/reactive power ratio available in Indian smart meters (IS 16444 compliant) to separate inductive motor loads ($\text{PF} \approx 0.70\text{--}0.85$) from purely resistive geysers ($\text{PF} = 1.0$).
-3. **Localized Calibration Pilots:** Instrumenting a localized cohort of 100–200 representative Indian households with sub-metered smart plugs to create a localized reference ground-truth library for supervised fine-tuning.
+3. **Motor-Signature Feature Engineering:** Transitioning from macro-power rolling averages to **high-frequency periodic oscillation filters** (e.g. Fourier/wavelet spectral analysis detecting the 0.5–2.0 Hz drum reversal cadence characteristic of pulsator motors).
+4. **Localized Calibration Pilots:** Instrumenting a localized cohort of 100–200 representative Indian households with sub-metered smart plugs to create a localized reference ground-truth library for supervised fine-tuning.
 
 ---
 

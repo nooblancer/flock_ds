@@ -44,3 +44,4 @@ RUN mkdir -p /app/data \
 # Or pass custom flags: docker run flock-energy-nilm --stage 4 --loho
 ENTRYPOINT ["python", "run_pipeline.py"]
 CMD ["--all"]
+

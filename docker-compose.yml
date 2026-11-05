@@ -26,3 +26,4 @@ services:
       - MPLCONFIGDIR=/app/outputs/.matplotlib_cache
     # Default execution: run the entire master pipeline end-to-end
     command: ["--all"]
+

@@ -216,8 +216,9 @@ In accordance with academic integrity and assignment guidelines:
 ## 7. Possible Future Improvements
 
 1. **Multimodal Disaggregation (Real + Reactive Power):** Incorporating reactive power (VAR) or apparent power (VA) would enable the model to distinguish purely resistive 2.2 kW loads (electric ovens/kettles, $\text{PF} \approx 1.0$) from inductive washing machine electric motors ($\text{PF} \approx 0.75\text{--}0.85$), dramatically boosting precision.
-2. **Semi-Supervised Domain Adaptation for Indian DISCOMs:** Applying adversarial domain adaptation (DANN) or synthetic profile generation to transfer UK-learned temporal dynamics to Indian top-loading non-heated washing machines and high-temperature environments.
-3. **Sequence-to-Point Temporal Convolutions:** Benchmarking 1D Dilated Temporal Convolutional Networks (TCN) or lightweight Transformer attention layers for multi-state cycle tracking over 120-minute receptive fields.
+2. **Dynamic Voltage Normalization for Distribution Stress:** Normalizing active power signatures via smart-meter RMS voltage telemetry ($P_{\text{norm}} = P \cdot (V_{\text{ref}} / V)^2$) to eliminate the $-23.4\%$ signature warping caused by peak-demand distribution voltage sags ($P = V^2 / R$).
+3. **Semi-Supervised Domain Adaptation for Indian DISCOMs:** Applying adversarial domain adaptation (DANN) or synthetic profile generation to transfer UK-learned temporal dynamics to Indian top-loading non-heated washing machines and high-temperature environments.
+4. **Sequence-to-Point Temporal Convolutions:** Benchmarking 1D Dilated Temporal Convolutional Networks (TCN) or lightweight Transformer attention layers for multi-state cycle tracking over 120-minute receptive fields.
 
 ---
 

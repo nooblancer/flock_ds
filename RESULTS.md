@@ -290,4 +290,60 @@ Naive multi-house concatenation naively stacks raw telemetry before feature engi
 4. **Diagnostic Verification:**
    The disaggregated power traces are visually verified in [`outputs/plots/nilm_loho_house20_actual_vs_predicted.png`](file:///d:/Code/flock_ds/outputs/plots/nilm_loho_house20_actual_vs_predicted.png), illustrating clean zero-shot reconstruction of washing cycles on House 20 with near-perfect onset alignment.
 
+---
+
+### 2.11 Grid Physics Limitations & Voltage Sags: Ohmic Warping of Active Power Signatures
+
+A foundational vulnerability of active-power-only NILM algorithms—including our gradient boosting pipeline—stems from the **fundamental physics of distribution power systems and Ohm's Law**. 
+
+The REFIT dataset, along with the vast majority of historical smart-meter rollouts, records **only Active Power ($P$ in Watts)**, omitting root-mean-square Voltage ($V_{\text{rms}}$) and Reactive Power ($Q$ in VAR). However, the internal electrical components of residential appliances do not draw constant power; their active draw depends directly on line voltage and load impedance.
+
+#### 1. The Ohmic Governed Physics ($P = V^2 / R$)
+A residential washing machine's water-heating element is an ohmic resistor with fixed impedance. For an appliance with an internal resistive heating element $R$ connected to single-phase AC supply voltage $V(t)$, the instantaneous active power dissipated is governed by Joule's First Law and Ohm's Law:
+$$I(t) = \frac{V(t)}{R} \implies P(t) = V(t) \cdot I(t) = \frac{V(t)^2}{R}$$
+
+For a standard European washing machine rated at nominal active power $P_{\text{nom}} = 2,000\text{ W}$ at statutory nominal grid voltage $V_{\text{nom}} = 240\text{ V}$, the internal resistance of the heating coil is invariant:
+$$R = \frac{V_{\text{nom}}^2}{P_{\text{nom}}} = \frac{240^2}{2000} = \frac{57,600}{2000} = 28.8\,\Omega$$
+
+Because the heating element is a constant-impedance resistive load ($Z = R + j0$), **active power drawn varies quadratically with the supply voltage**:
+$$P(t) \propto V(t)^2$$
+
+#### 2. The Distribution Grid Stress Vulnerability: Severe Signature Warping
+In real-world distribution networks, the supply voltage at the customer service entrance is never a static constant. Heavy feeder loading, peak evening demand, and distribution transformer impedance cause localized voltage drops along the feeder.
+
+Consider an evening peak demand scenario (e.g. 18:00–21:00) where substation transformer loading or distribution feeder impedance drops the customer voltage from nominal $240\text{ V}$ down to $210\text{ V}$ (a $12.5\%$ voltage sag, well within realistic distribution network stress conditions):
+$$P_{\text{sag}} = \frac{V_{\text{sag}}^2}{R} = \frac{210^2}{28.8} = \frac{44,100}{28.8} \approx 1,531.25\text{ W}$$
+
+This creates a **drastic $-23.44\%$ collapse in active power draw**:
+$$\frac{\Delta P}{P_{\text{nom}}} = \left(\frac{210}{240}\right)^2 - 1 = (0.875)^2 - 1 = 0.7656 - 1 = -23.44\%$$
+
+| Operating Condition | Line Voltage $V_{\text{rms}}$ | Heating Resistance $R$ | Active Power Draw $P$ | Deviation from Nominal |
+| :--- | :---: | :---: | :---: | :---: |
+| **Nominal Voltage (UK Benchmark)** | $240\text{ V}$ | $28.8\,\Omega$ | **$2,000\text{ W}$** | $0.0\%$ (Nominal Baseline) |
+| **Statutory UK Low (230V -6%)** | $216.2\text{ V}$ | $28.8\,\Omega$ | **$1,623\text{ W}$** | $-18.8\%$ |
+| **Feeder Peak Demand Sag** | $210.0\text{ V}$ | $28.8\,\Omega$ | **$1,531\text{ W}$** | **$-23.4\%$** |
+| **Severe Brownout / Rural Feeder** | $190.0\text{ V}$ | $28.8\,\Omega$ | **$1,253\text{ W}$** | **$-37.3\%$** |
+
+#### 3. How Voltage Sags Cause Active-Power-Only Models to Fail
+1. **Feature Vector Degradation:**
+   The gradient boosting tree splits heavily on multi-scale rolling statistics (`agg_roll_mean_15`, `agg_roll_max_30`). Under stable 240V conditions, a wash cycle heating phase pushes `agg_roll_mean_15` above $1,800\text{ W}$. During a 210V grid sag, this feature collapses to $\approx 1,350\text{ W}$, falling below the learned split thresholds and causing the model to misattribute the active heating pulse to idle noise or small kitchen appliances.
+2. **False Negatives in Deterministic Event Stitching:**
+   Heuristic and rule-based event extractors that enforce rigid peak gates (e.g. `min_peak >= 1,800 W` or `2,000 W`) will completely miss the cycle, leading to catastrophic false-negative dropouts ($F_{1,\text{event}} \to 0$).
+3. **Temporal Smearing Due to Thermostatic Compensation:**
+   To heat the water volume to the preset program temperature (e.g., $40^\circ\text{C}$ or $60^\circ\text{C}$), the required thermal energy is invariant:
+   $$Q_{\text{thermal}} = m \cdot c_p \cdot \Delta T = \int_{0}^{t_{\text{heat}}} P(t)\,dt$$
+   When active power drops from $2.0\text{ kW}$ to $1.53\text{ kW}$, the thermostatic switch must keep the heating element energized for **$\approx 30.6\%$ longer** to deliver the same thermal energy ($t_{\text{heat}} \propto 1/P$). This artificially elongates the heating duration, further warping temporal features and confounding models calibrated on fixed cycle durations.
+
+#### 4. Future Iteration Roadmap: Production Solutions for Distribution Resilience
+To achieve true utility-grade robustness against distribution grid dynamics, future AMI deployments and NILM modeling iterations must adopt the following architectural upgrades:
+
+1. **Dynamic Voltage Normalization via AMI Voltage Telemetry ($V_{\text{rms}}$):**
+   Modern smart meters (compliant with DLMS/COSEM, IS 16444, or ANSI C12) possess onboard metrology processors that measure RMS voltage. Ingestion pipelines should dynamically normalize active power back to standard reference voltage ($V_{\text{ref}} = 230\text{ V}$ or $240\text{ V}$) prior to feature engineering:
+   $$P_{\text{normalized}}(t) = P(t) \cdot \left(\frac{V_{\text{ref}}}{V(t)}\right)^2$$
+   This eliminates the quadratic voltage dependence, restoring the $2.0\text{ kW}$ signature invariant to grid sags or rooftop solar over-voltage swells.
+2. **Multidimensional Phase Space: Apparent ($S$) & Reactive Power ($Q$):**
+   Washing machines combine a unity-power-factor resistive heater ($\text{PF} \approx 1.0$, $Q \approx 0\text{ VAR}$) with an inductive drum motor ($\text{PF} \approx 0.70\text{--}0.85$, $Q > 0\text{ VAR}$). Tracking the complex power vector $\mathbf{S} = P + jQ$ enables separation of motor agitation from background resistive sags.
+3. **Impedance-Based Disaggregation:**
+   Rather than treating the disaggregation target as active power ($P$), models can be trained to disaggregate equivalent network admittance $Y = G + jB = \frac{I}{V}$, which remains physically invariant to supply voltage fluctuations.
+
 
