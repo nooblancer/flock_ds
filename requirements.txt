@@ -1,24 +1,28 @@
 # ==============================================================================
-# Flock Energy NILM Pipeline - Core Dependencies
-# Production-locked versions tested and verified for Python 3.10+
+# NILM Disaggregation Engine - Core Dependencies
+# Production-tested versions for Python 3.10+
 # ==============================================================================
 
 # Core Numerical & Data Processing
-numpy==1.26.4
-pandas==2.2.2
-scipy==1.13.1
+numpy>=1.26.0,<2.0.0
+pandas>=2.2.0,<3.0.0
+scipy>=1.13.0,<2.0.0
 
 # Machine Learning & NILM Disaggregation
-scikit-learn==1.4.2
-xgboost==2.0.3
+scikit-learn>=1.4.0,<2.0.0
+xgboost>=2.0.0,<3.0.0
 
-# Visualization & Diagnostic Reporting
-matplotlib==3.8.4
-seaborn==0.13.2
+# Visualization & Reporting
+matplotlib>=3.8.0,<4.0.0
+seaborn>=0.13.0,<1.0.0
+
+# Interactive Web Application / Dashboard
+streamlit>=1.35.0
+altair>=5.0.0
 
 # Progress Bar & Utilities
-tqdm==4.66.4
+tqdm>=4.66.0
 
-# Optional: Interactive Notebooks (uncomment if launching Jupyter locally)
+# Optional: Interactive Notebooks
 # jupyter>=1.0.0
 # ipykernel>=6.0.0

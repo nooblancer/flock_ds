@@ -1,18 +1,15 @@
 """
-Master End-to-End Pipeline Runner for Flock Energy NILM Project.
-
-Executes all project stages sequentially or individually:
+Master End-to-End Pipeline Runner:
   Stage 1: Setup validation and data sanity check
   Stage 2: Raw data inspection & 1-minute cleaning for House 1
   Stage 3: Multi-household washing machine EDA & cycle detection
-  Stage 4: Appliance-disaggregation modeling & baseline evaluation
+  Stage 4: Appliance-disaggregation modeling & baseline evaluation (Single-House or LOHO)
+  Stage 5: Macro energy attribution via Non-Negative Matrix Factorization (30-min AMI data)
 
 Usage:
   python run_pipeline.py --all
-  python run_pipeline.py --stage 1
-  python run_pipeline.py --stage 2
-  python run_pipeline.py --stage 3
-  python run_pipeline.py --stage 4
+  python run_pipeline.py --stage <1-5>
+  python run_pipeline.py --stage 4 --loho
 """
 import sys, os
 import argparse
@@ -96,10 +93,17 @@ def run_stage_4(
             feature_strategy=feature_strategy,
         )
 
+def run_stage_5():
+    print("\n" + "=" * 70)
+    print("  RUNNING STAGE 5: Macro Energy Attribution via NMF (30-min AMI Data)")
+    print("=" * 70)
+    from src.macro_disaggregation_nmf import run_macro_disaggregation_nmf
+    run_macro_disaggregation_nmf()
+
 def main():
-    parser = argparse.ArgumentParser(description="Flock Energy NILM End-to-End Pipeline")
-    parser.add_argument("--all", action="store_true", help="Run entire end-to-end pipeline")
-    parser.add_argument("--stage", type=int, choices=[1, 2, 3, 4], help="Run a specific stage (1-4)")
+    parser = argparse.ArgumentParser(description="NILM Disaggregation & Energy Analytics End-to-End Pipeline")
+    parser.add_argument("--all", action="store_true", help="Run entire end-to-end pipeline (Stages 1-5)")
+    parser.add_argument("--stage", type=int, choices=[1, 2, 3, 4, 5], help="Run a specific stage (1-5)")
     parser.add_argument("--loho", action="store_true", help="Run Leave-One-House-Out cross-validation in Stage 4")
     parser.add_argument("--train-houses", nargs="+", type=int, default=[1, 2, 5, 7], help="Training house IDs for LOHO")
     parser.add_argument("--test-house", type=int, default=20, help="Target unseen test house ID for LOHO")
@@ -127,12 +131,13 @@ def main():
 
     if args.all or args.stage is None:
         print("\n" + "#" * 70)
-        print("  EXECUTING COMPLETE END-TO-END FLOCK ENERGY DATA SCIENCE PIPELINE")
+        print("  EXECUTING COMPLETE END-TO-END NILM DATA SCIENCE PIPELINE")
         print("#" * 70)
         run_stage_1()
         run_stage_2()
         run_stage_3()
         run_stage_4(**stage_4_kwargs)
+        run_stage_5()
     elif args.stage == 1:
         run_stage_1()
     elif args.stage == 2:
@@ -141,6 +146,8 @@ def main():
         run_stage_3()
     elif args.stage == 4:
         run_stage_4(**stage_4_kwargs)
+    elif args.stage == 5:
+        run_stage_5()
 
     elapsed = time.time() - start_time
     print("\n" + "#" * 70)

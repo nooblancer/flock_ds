@@ -1,5 +1,5 @@
 """
-Script to generate the end-to-end Jupyter Notebook for the Flock Energy NILM project.
+Script to generate the end-to-end Jupyter Notebook for the NILM Disaggregation project.
 """
 import json
 from pathlib import Path
@@ -10,12 +10,11 @@ nb = {
             "cell_type": "markdown",
             "metadata": {},
             "source": [
-                "# Flock Energy — NILM Data Science Pipeline\n",
-                "## REFIT Data Cleaning & Appliance Disaggregation (Washing Machine)\n",
+                "# NILM-Flow: Energy Disaggregation & Appliance Load Profiling\n",
+                "## REFIT Data Cleaning & Washing Machine Disaggregation Pipeline\n",
                 "\n",
-                "**Candidate:** Kushagra Bhatore  \n",
-                "**Role:** Junior Data Scientist  \n",
-                "**Company:** Flock Energy / Watt Wizards Pvt. Ltd.  \n",
+                "**Author:** Kushagra Sharma  \n",
+                "**Dataset:** REFIT Electrical Load Measurements (Murray et al., 2015)  \n",
                 "\n",
                 "---\n",
                 "### Notebook Roadmap\n",

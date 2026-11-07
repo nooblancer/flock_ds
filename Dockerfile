@@ -1,5 +1,5 @@
 # ==============================================================================
-# Production Dockerfile for Flock Energy NILM Disaggregation Pipeline
+# Production Dockerfile for NILM Disaggregation Engine & Analytics Dashboard
 # Base: Debian-slim Python 3.10 runtime
 # ==============================================================================
 
@@ -39,9 +39,9 @@ RUN mkdir -p /app/data \
     /app/outputs/tables \
     /app/outputs/.matplotlib_cache
 
+# Expose port for optional Streamlit dashboard
+EXPOSE 8501
+
 # Default entrypoint and master pipeline argument
-# Reviewers can run default end-to-end: docker run flock-energy-nilm
-# Or pass custom flags: docker run flock-energy-nilm --stage 4 --loho
 ENTRYPOINT ["python", "run_pipeline.py"]
 CMD ["--all"]
-
